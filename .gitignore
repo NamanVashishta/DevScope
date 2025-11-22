@@ -1,6 +1,8 @@
 # minimal ignores
 screenshots/
 yell_voice.*
+temp_disk/
+.devscope/
 *.pyc
 __pycache__/
 .DS_Store

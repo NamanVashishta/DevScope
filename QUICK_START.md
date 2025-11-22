@@ -1,79 +1,61 @@
-# Aura - The AI Focus Partner - Quick Start Guide (macOS)
+# DevScope Quick Start (macOS)
 
-Aura now targets macOS only. Follow these steps to go from clone → running GUI in a couple of minutes.
+DevScope currently targets macOS Sequoia/Sonoma. Follow these steps to go from clone → running the PyQt control panel.
 
-## 🚀 Fastest Way to Get Started on macOS
+## 1. Install prerequisites
 
-1. **Install Python 3.8+** (if not already installed)
-   - Check: `python3 --version`
-   - Install via Homebrew: `brew install python3` (or download from [python.org](https://www.python.org/downloads/))
+- Python 3.10+ (Homebrew: `brew install python@3.11`)
+- Xcode Command Line Tools (`xcode-select --install`)
+- FFmpeg (optional, legacy TTS): `brew install ffmpeg`
 
-2. **Clone and enter the project**
-   ```bash
-   git clone <your-repo-url>
-   cd Transparent-Focus-Agent
-   ```
+## 2. Clone and bootstrap
 
-3. **Run the launcher script**
-   ```bash
-   chmod +x run.sh    # one-time, if needed
-   ./run.sh
-   ```
-   The script will create/activate `focusenv`, install dependencies, and launch the PyQt GUI.
-
-4. **Grant Screen Recording permission**
-   - First launch triggers the macOS prompt; approve it.
-   - Or manually: System Settings → Privacy & Security → Screen Recording → enable for Terminal (or your IDE).
-   - Restart Aura after toggling permissions.
-
-5. **Set your API keys**
-   ```bash
-   export GEMINI_API_KEY="AIza..."
-   export ELEVEN_LABS_API_KEY="eleven-..."   # optional, for TTS
-   ```
-   Make them persistent by appending to `~/.zshrc` or `~/.bash_profile`, then `source` the file.
-
-6. **Start a session**
-   - Enter goal + allowed/blocked behaviors.
-   - Click `Start` (or press `Cmd+Enter`).
-   - Aura captures the active window every few seconds and intervenes if you drift.
-
-## 💡 Tips
-
-- **Free tier**: Gemini 2.0 Flash is fast and $0 (with a generous monthly cap).
-- **Delay tuning**: 5–10 s `delay_time` balances accuracy vs. cost; 0 s is full streaming.
-- **TTS reminders**: Enable Eleven Labs voices for spoken nudges if you exported `ELEVEN_LABS_API_KEY`.
-
-## ⚙️ Recommended Settings
-
-- **Default**: `model_name=gemini-2.0-flash`, `delay_time=5`, `countdown_time=15`.
-- **Maximum accuracy**: `model_name=gemini-2.0-flash`, `delay_time=0`, `print_CoT=true`.
-
-## 📝 Session Prompt Examples
-
-**Coding**
-```
-I'm implementing OAuth in my Flask backend.
-Allowed: VS Code, Stack Overflow, GitHub docs, Postman.
-Not allowed: Twitter, YouTube (unless coding tutorial), news.
+```bash
+git clone <repo-url>
+cd Transparent-Focus-Agent
+python3 -m venv focusenv
+source focusenv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-**Writing**
-```
-I'm drafting the Related Work section for my HCI paper.
-Allowed: ACM DL, Zotero, PDF readers, Google Scholar.
-Not allowed: entertainment sites, messaging apps, online shopping.
+## 3. Configure API tokens
+
+```bash
+export GEMINI_API_KEY="AIza..."
+export SLACK_BOT_TOKEN="xoxb-..."
+# optional: export ELEVEN_LABS_API_KEY="eleven-..."
 ```
 
-**Studying**
-```
-I'm revising for my calculus midterm.
-Allowed: Khan Academy, Desmos, lecture slides.
-Not allowed: games, social media, YouTube (except study channels).
+Add the exports to `~/.zshrc` if you want them to persist.
+
+## 4. Grant permissions
+
+1. Launch once to trigger the macOS Screen Recording prompt, or open System Settings → Privacy & Security → Screen Recording → enable for Terminal/Python.
+2. If you plan to capture multiple displays, allow “Record entire screen”.
+
+## 5. Run the control panel
+
+```bash
+python3 src/ui.py
 ```
 
-## 🆘 Problems?
+In the UI:
+- Click “Select Project Folder” and choose the repo whose commits/Slack replies you want DevScope to handle.
+- Press “Start Session”. The monitor + triggers spin up, and the log panel will stream buffer summaries and events.
 
-- Consult `MAC_SETUP.md` for detailed troubleshooting (permissions, PyQt install, Gemini setup).
-- Still stuck? Run `python3 -m pip install --upgrade pip setuptools wheel`, re-run `./run.sh`, and re-check Screen Recording toggles.
+## 6. Demo script
+
+1. Open VS Code and a browser with docs. DevScope begins capturing every 10 s.
+2. Send yourself a Slack DM from another account. When you’re marked as deep work, DevScope auto-answers.
+3. Make a git commit. Check the generated Markdown context report under `<repo>/.devscope/context-<commit>.md`.
+
+## Troubleshooting
+
+- **No screenshots:** Re-run after granting Screen Recording; check Console for `CGWindowList` permission errors.
+- **Gemini errors:** Verify `GEMINI_API_KEY` and network connectivity. Try `pip install google-generativeai==0.5.*`.
+- **Slack auth issues:** Confirm the bot token includes `im:history`, `chat:write`, and the bot is invited to your DM.
+- **PyQt crash:** Ensure `qt-material` is installed (`pip install qt-material`) and macOS is not blocking unsigned apps.
+
+Still stuck? See `HOW_TO_RUN.md` or run `python3 scripts/devscope_demo.py` (coming soon) for a mocked walkthrough.
 

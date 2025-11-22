@@ -1,8 +1,8 @@
 #!/bin/bash
-# macOS/Linux launcher script for Aura - The AI Focus Partner
-# This script activates the virtual environment and starts the GUI
+# macOS launcher script for DevScope - The Visual Cortex
+# Activates the virtual environment and starts the new PyQt UI
 
-echo "Aura - The AI Focus Partner"
+echo "DevScope - The Visual Cortex"
 
 # Check if virtual environment exists
 if [ ! -d "focusenv" ]; then
@@ -27,8 +27,8 @@ if [ $? -ne 0 ]; then
 fi
 
 # Start the GUI
-echo "Starting Aura - The AI Focus Partner..."
-python3 src/user_interface.py
+echo "Starting DevScope..."
+python3 src/ui.py
 
 # Deactivate virtual environment when done
 deactivate

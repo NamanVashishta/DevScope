@@ -1,177 +1,122 @@
-# Aura - The AI Focus Partner
-## 🔍 Overview
+# DevScope – The Visual Cortex for Engineering Teams
 
-**Aura** is a macOS-native desktop application that acts as an intelligent, context-aware focus partner. Unlike traditional site blockers that work on simple URL blacklists, Aura uses **multimodal AI vision** to understand *what you're actually doing* on your screen—not just what app you're using.
+DevScope is an agentic layer that automates engineering context. It runs locally on macOS, captures your development workflow through multimodal vision, and turns that stream into actionable collaboration artifacts: protected deep-work time, automated Q&A, and contextualized handoffs.
 
-### The Magic: Visual Context Understanding
+## The Pitch
 
-Aura's "magic" is that it's not a "dumb" blocker. It's **smart enough to understand visual context**. For example:
-- ✅ Watching a coding tutorial on YouTube → **Productive** (allowed)
-- ❌ Watching entertainment videos on YouTube → **Procrastinating** (nudged)
-- ✅ Reading `reddit.com/r/latex` for your HCI paper → **Productive** (allowed)
-- ❌ Browsing `reddit.com/r/funny` → **Procrastinating** (nudged)
+> “Software collaboration is broken. We interrupt engineers like routers—asking ‘What are you working on?’ or ‘Where are the API keys?’ Every ping kills flow.  
+> DevScope automates context. It maintains a visual memory of the workspace, frees engineers to stay heads-down, and still keeps the team informed.”
 
-Aura sees the *actual content* on your screen, not just the application name. This makes it fundamentally different from any other productivity tool.
+- **Protects Flow:** Detects deep work visually and shields the engineer from Slack noise unless it can answer on their behalf.
+- **Automates Answers (Visual RAG):** Searches the latest visual buffer to resolve teammate questions (“He was looking at `.env` 5 minutes ago; here’s the snippet.”).
+- **Automates Handoffs:** When code is committed, DevScope bundles the last 30 minutes of visual context (logs, docs, fixes) and attaches it to the commit for reviewers.
 
-### How It Works
+## Defensive Talking Points
 
-Aura works by taking screenshots of your active window every few seconds (at a configurable interval) and feeding them into a multimodal AI model (Gemini 2.0 Flash). The AI analyzes the *visual content* on your screen along with your session goal to determine if you're being productive or procrastinating.
+1. **Is this spyware?** No. All screenshots live in a local ring buffer that auto-purges every 30 minutes. Data leaves the device only when the developer explicitly shares it (auto-answer, context report). DevScope is defensive tooling for the maker.
+2. **Why call it collaborative if it blocks Slack?** Deep collaboration requires deep work. DevScope blocks interruptions only when it can answer them using the visual history, keeping information flowing asynchronously.
+3. **How do you link context to commits?** We watch `.git/logs/HEAD`. When a commit appears, we freeze the buffer and attach that time window to the commit hash.
+4. **What about private work?** A privacy allow/deny list prevents sensitive surfaces (e.g., banking apps) from being captured at all. Vision runs locally before anything is stored.
 
-Before every Aura session, you specify:
-- **Your Goal:** What you're planning to work on (e.g., "Finish my HCI paper")
-- **Allowed Behaviors:** What's considered productive (e.g., "Stack Overflow, GitHub, React docs, coding tutorials on YouTube")
-- **Blocked Behaviors:** What's considered procrastination (e.g., "Social media, entertainment videos, games")
+## Architecture Overview
 
-Aura can handle nuanced rules such as *"I'm allowed to go on YouTube, but only to watch Karpathy's lecture on Makemore"*. No other productivity software can handle this level of flexibility because they can't see the actual content—only the application name.
+### Hybrid Ring Buffer
 
-### It's Alive!
+DevScope sees everything but only remembers what matters. Screenshots stream into a bounded deque (maxlen 180 ≈ 30 minutes at 10‑second cadence). Once entries roll off, their image files are deleted.
 
-A big design goal with Aura is that it should *feel alive*. In practice, users tend not to break the rules because they can intuitively *feel* the AI watching them—just like how test-takers are much less likely to cheat when they can *feel* someone watching them. The real-time monitoring creates a psychological presence that helps maintain focus.
-
-## 🚀 Setup and Installation
-
-**This build is macOS-only.** All scripts and docs below assume you are on macOS Sequoia/Sonoma (Apple Silicon or Intel).
-
-### macOS
-
-```bash
-git clone <your-repo-url>
-cd Transparent-Focus-Agent
-chmod +x run.sh  # Make script executable (if needed)
-./run.sh
+```
+Quartz/MSS → temp_disk/<timestamp>.png → Gemini Flash → metadata deque
 ```
 
-**For detailed macOS setup, see [MAC_SETUP.md](MAC_SETUP.md)** and the mac-specific [QUICK_START.md](QUICK_START.md).
+Each buffer entry:
+```json
+{
+  "timestamp": "...",
+  "task": "Debugging",
+  "app": "VS Code",
+  "technical_context": "Error 500 in payments.py",
+  "is_deep_work": true,
+  "image_path": "temp_disk/..."
+}
+```
 
-**Note:** On macOS, you'll need to grant Screen Recording permission in System Settings → Privacy & Security → Screen Recording.
+### Component Map
 
-### API Keys
+| Component | Purpose |
+|-----------|---------|
+| `src/monitor.py` | Visual engine: captures the screen every 10 s, sends frames to Gemini 2.0 Flash, stores metadata in the deque, purges old frames, honors privacy lists. |
+| `src/triggers.py` | Git watcher (`watchdog`) plus Slack watcher (`slack_sdk`). Git commits → Markdown context reports. Slack DMs + `is_deep_work` → Gemini-powered auto replies. |
+| `src/ui.py` | PyQt5 + `qt-material` control panel. Select repo, start/stop session, inspect live status (buffer entries, trigger actions). |
+| `src/api_models.py` | Gemini client wrapper (already present) reused for visual labeling. |
+| `src/utils.py` | macOS capture pipeline (Quartz + MSS), temp-disk helpers, privacy filters, common logging. |
 
-Define these environment variables before launching Aura:
-- `GEMINI_API_KEY` - Required for Gemini 2.0 Flash (free tier available)
-- `ELEVEN_LABS_API_KEY` - Optional, enables text-to-speech alerts
+## Data Flow
 
-**💡 Cost Optimization Tip:** Increase `delay_time` (e.g., 5–10 seconds) to reduce screenshot frequency and API calls while staying within Gemini’s free tier.
+1. **Visual capture:** `monitor.py` calls the Quartz/MSS pipeline (from `utils.py`) every 10 seconds (configurable), writes frames to `temp_disk/`.
+2. **Labeling:** Each frame is sent to Gemini 2.0 Flash for lightweight tags (`task`, `app`, `technical_context`, `is_deep_work`).
+3. **Ring buffer:** Metadata + file path stored inside `collections.deque(maxlen=180)`. When an entry is dropped, its image is deleted.
+4. **Triggers:**  
+   - **Git:** `watchdog` monitors `.git/logs/HEAD`. On change (commit), DevScope snapshots the buffer, renders a Markdown “Context Report” (recent images, textual summary), and saves it alongside the repo.  
+   - **Slack:** `slack_sdk` listens for DMs. If the buffer shows `is_deep_work=True`, DevScope asks Gemini whether it can answer based on visual history. If yes, it auto-replies and logs the action.
+5. **UI:** PyQt5 dashboard spawns worker threads for monitor + triggers, displays last labels, buffer fill, and trigger activity. Theme: qt-material “Dark Teal”.
 
+## Privacy Model
 
-## ✨ Key Features
+- **Local ring buffer:** Stored in-memory plus tmp PNGs, purged after 30 minutes.
+- **Explicit sharing:** Only triggered by auto-answer or commit context; otherwise data never leaves the device.
+- **Privacy filters:** Blocklisted apps/URLs are skipped before capture (`DEVSCOPE_PRIVACY_APPS="Safari,Notes"`). Future work includes dynamic OCR-based redaction.
 
-- **🎯 Visual Context Understanding:** Sees actual content on your screen, not just app names
-- **🍏 macOS-Native Flow:** Tuned for macOS permissions, screen capture, and TTS
-- **🤖 Gemini-Powered Monitoring:** Tuned specifically for Gemini 2.0 Flash multimodal analysis
-- **💰 Cost-Effective:** Gemini Flash stays in the free tier with sensible screenshot intervals
-- **⚡ Real-Time Monitoring:** Active window tracking with configurable frequency
-- **🎨 Modern GUI:** Beautiful PyQt5 interface with live status indicators
-- **🔊 Optional TTS:** Text-to-speech alerts using Eleven Labs
-- **📊 Post-Session Analytics:** Analyze your focus patterns (see `analytics.py`)
+## Setup
 
-## ⚙️ Configuration Options
+### Requirements
 
-The following settings can be configured in the GUI settings panel or via command-line arguments:
+- macOS Sequoia/Sonoma with screen-recording permission.
+- Python 3.10+ (recommend Homebrew install).
+- Google Gemini API key (`GEMINI_API_KEY`).
+- Slack bot token (`SLACK_BOT_TOKEN`) with DM scope (for auto replies).
+- Optional: `ELEVEN_LABS_API_KEY` if you keep legacy TTS hooks.
+- `qt-material`, `watchdog`, `slack_sdk`, `mss`, `PyQt5`, `google-generativeai`.
 
-| Setting | Description |
-|---------|-------------|
-| `model_name` | AI model to use (mac-only build supports `gemini-2.0-flash`) |
-| `tts` | Enable Eleven Labs text-to-speech for voice alerts |
-| `voice` | Voice selection for TTS (Adam, Arnold, Emily, Harry, Josh, Patrick) |
-| `cli_mode` | Run without GUI (command-line only) |
-| `delay_time` | Seconds between screenshots (0 = continuous, higher = less frequent) |
-| `initial_delay` | Seconds to wait before monitoring starts (time to set up your workspace) |
-| `countdown_time` | Seconds given to close distraction after being caught (default: 15) |
-| `user_name` | Your name for personalized messages |
-| `print_CoT` | Show AI's chain-of-thought reasoning in console |
+### Quick Start
 
+```bash
+git clone <repo>
+cd Transparent-Focus-Agent
+python3 -m venv focusenv && source focusenv/bin/activate
+pip install -r requirements.txt
+export GEMINI_API_KEY=...
+export SLACK_BOT_TOKEN=xoxb-...
+python3 src/ui.py
+```
 
-## 🏗️ Architecture
+Grant Screen Recording under System Settings → Privacy & Security → Screen Recording for Terminal/Python.
 
-### Core Components
+### Configuring DevScope
 
-- **`main.py`** - Main control loop that orchestrates screenshot capture, AI analysis, and intervention triggers
-- **`user_interface.py`** - PyQt5 GUI for session setup, live monitoring, and settings management
-- **`api_models.py`** - Gemini client wrapper plus shared model orchestration helpers
-- **`procrastination_event.py`** - Intervention system with popup windows and countdown timers
-- **`utils.py`** - macOS-focused utilities for screenshot capture, text-to-speech, and platform detection
-- **`config_prompts.yaml`** - All AI prompts for different roles (judge, heckler, pledge, countdown, etc.)
-- **`analytics.py`** - Post-session analysis tools for reviewing focus patterns
+- **Project folder**: select inside the UI; DevScope watches its `.git/logs/HEAD`.
+- **Capture cadence**: default 10 s; lower for more fidelity, higher to save cost.
+- **Privacy list**: define in `privacy.yaml` (coming soon) to skip sensitive domains/apps.
+- **Slack auto-answer**: toggle in UI. Requires bot token configured.
 
-### How It Works
+## Demo Script
 
-1. **Session Setup:** User enters goal and allowed/blocked behaviors in GUI
-2. **Active Window Monitoring:** System captures screenshots of active window at configured intervals
-3. **AI Analysis:** Screenshots sent to multimodal AI with user's goal for context-aware analysis
-4. **Decision Making:** AI determines if activity is "productive" or "procrastinating" based on visual content
-5. **Intervention:** If procrastinating, shows popup with personalized message, pledge, and countdown timer
-6. **Continuous Loop:** Process repeats until user stops the session
+1. Open DevScope UI, select a repo, press Start.
+2. Show live buffer entries updating (task/app labels).
+3. Trigger a Slack DM from a teammate; show DevScope auto-answering with visual context.
+4. Make a git commit; display generated Markdown context report.
 
-### Generated Files
+## Roadmap
 
-As the program runs, it creates:
-- `settings.json` - Your configuration preferences (auto-created)
-- `screenshots/` - Folder containing all captured screenshots (with timestamps)
-- `yell_voice.mp3` - TTS audio file (if TTS enabled, created in `src/` folder)
+- Buffer analytics (heatmaps of tasks, time-in-deep-work).
+- Commit hooks to attach context reports automatically.
+- Privacy-first OCR scrubbing before storage.
+- Cross-platform capture (Windows/Linux) with OS-specific hooks.
+- Packaging (PyInstaller/dmg) for one-click install.
 
-## 🎯 Use Cases
+## License
 
-Aura is perfect for:
-
-- **👨‍💻 Software Developers:** Monitor coding sessions, allow Stack Overflow/GitHub/docs, block social media
-- **📚 Students:** Study session monitoring, allow educational content, block distractions
-- **✍️ Writers:** Writing session focus, allow research materials, block time-wasting sites
-- **💼 Remote Workers:** Work session accountability, customizable rules per project, productivity tracking
-- **🎓 Researchers:** Deep work sessions with context-aware monitoring
-
-## 🔒 Privacy & Security
-
-- **Local-Only Storage:** All screenshots are stored locally on your machine
-- **No Cloud Uploads:** Screenshots never leave your computer
-- **No External Tracking:** No analytics or telemetry sent to external servers
-- **User Control:** You can delete the `screenshots/` folder at any time
-- **API Privacy:** Screenshots are sent to Google (Gemini) for analysis—review their privacy policies
-
-## 🌐 Roadmap and Future Improvements
-
-This project is actively under development. Planned features:
-
-### Short Term
-- **System Tray Integration:** Minimize to system tray/menu bar for background operation
-- **Session Timers:** Set duration goals (e.g., "Focus for 60 minutes")
-- **Whitelist System:** User can mark false positives as "work-related" to prevent repeat nudges
-- **Native Notifications:** Optional native OS notifications (less intrusive than popups)
-- **Post-Session Coach:** AI-generated performance review after each session
-
-### Medium Term
-- **Session Scheduling:** Auto-start when you open your computer
-- **Enhanced Analytics:** Full integration of post-session analysis into main UI
-- **Draft Sessions:** Save and reuse common session configurations
-- **Fine-Tuned Models:** Tailored Gemini prompt packs for niche workflows
-- **Hybrid Monitoring:** Combine window title tracking with visual analysis for cost optimization
-
-### Long Term
-- **Multi-Session Tracking:** Track productivity patterns over time
-- **Customizable Interventions:** User-defined intervention styles (gentle vs. strict)
-- **Team Features:** Share session goals and accountability with teammates
-- **Mobile Companion:** Mobile app for session management and quick stats
-
-## 📚 Additional Documentation
-
-- **[QUICK_START.md](QUICK_START.md)** - Get up and running fast on macOS
-- **[MAC_SETUP.md](MAC_SETUP.md)** - macOS-specific setup and troubleshooting guide
-- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - How to test Aura
-- **[RATE_LIMIT_GUIDE.md](RATE_LIMIT_GUIDE.md)** - Managing API rate limits
-- **[API_KEYS_EXPLAINED.md](API_KEYS_EXPLAINED.md)** - API key setup guide
-
-## 🤝 Contributing
-
-Contributions are welcome! This project is actively developed and open to improvements. Areas where help is especially appreciated:
-- macOS testing across Sequoia/Sonoma hardware
-- Cost optimization strategies
-- UI/UX improvements
-- Documentation enhancements
-
-## 📄 License
-
-[Add your license here]
+Add your preferred license.
 
 ---
 
-**Built with ❤️ for people who want to do deep work, but need a little help staying focused.**
+**DevScope shifts collaboration from synchronous interruption to asynchronous intelligence.**
