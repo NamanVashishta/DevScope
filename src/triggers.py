@@ -20,14 +20,15 @@ logger = logging.getLogger(__name__)
 class ContextReporter:
     """Renders the current buffer into a Markdown context report."""
 
-    def __init__(self, monitor: VisualMonitor, repo_path: str):
+    def __init__(self, monitor: VisualMonitor, repo_path: str, session_id: str):
         self.monitor = monitor
         self.repo_path = Path(repo_path)
+        self.session_id = session_id
         self.output_dir = self.repo_path / ".devscope"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def write_report(self, commit_hash: str) -> Path:
-        entries = self.monitor.snapshot()
+        entries = self.monitor.snapshot(self.session_id)
         if not entries:
             logger.info("No buffer entries, skipping report.")
             return Path()
@@ -43,6 +44,10 @@ class ContextReporter:
             "",
             "## Recent Activity",
         ]
+
+        session = self.monitor.get_session(self.session_id)
+        session_label = session.name if session else self.session_id
+        lines.insert(1, f"- Session: `{session_label}`")
 
         for entry in entries[-15:]:
             label = "✅ Deep Work" if entry.is_deep_work else "⚠️ Context Switch"
@@ -64,12 +69,14 @@ class GitTrigger(FileSystemEventHandler):
     def __init__(
         self,
         repo_path: str,
+        session_id: str,
         monitor: VisualMonitor,
         status_callback: Optional[Callable[[str], None]] = None,
     ):
         self.repo_path = Path(repo_path)
         self.monitor = monitor
-        self.reporter = ContextReporter(monitor, repo_path)
+        self.session_id = session_id
+        self.reporter = ContextReporter(monitor, repo_path, session_id)
         self.status_callback = status_callback
         self.head_log = self.repo_path / ".git" / "logs" / "HEAD"
         self.observer = Observer()
