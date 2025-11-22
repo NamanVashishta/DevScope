@@ -1,8 +1,6 @@
-focusenv/
-__pycache__/
-*.pyc
-.DS_Store
+# minimal ignores
 screenshots/
 yell_voice.*
-*.mp3
-*.wav
+*.pyc
+__pycache__/
+.DS_Store
