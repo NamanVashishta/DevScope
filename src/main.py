@@ -1,0 +1,143 @@
+
+import time
+import os
+import sys
+import site
+
+from tqdm import tqdm
+import yaml
+import threading 
+import concurrent.futures
+import argparse
+
+from api_models import *
+from procrastination_event import ProcrastinationEvent 
+from utils import take_screenshots, take_screenshot_active_window, get_text_to_speech, play_text_to_speech
+
+
+with open(os.path.dirname(__file__)+'/config_prompts.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+
+
+def model_pipeline(model: Model, judge_model, user_prompt: str, total_cost: float, image_filepaths: list, print_CoT=False):
+    # goes from model to determination of "productive" or "procrastinating"
+    response = model.call_model(user_prompt, system_prompt=config["system_prompt"], image_paths=image_filepaths)
+    if print_CoT:
+        print(response)
+    pricing_info_dict = model.count_tokens(config["system_prompt"], config["user_prompt"], response, image_paths=image_filepaths)
+    if pricing_info_dict is not None:
+        total_cost += pricing_info_dict["total_cost"]
+    
+    determination = judge_model.call_model(config["user_prompt_judge"]+response, system_prompt=config["system_prompt_judge"])
+    
+    pricing_info_dict = model.count_tokens(config["system_prompt_judge"], config["user_prompt_judge"]+response, determination)
+    if pricing_info_dict is not None:
+        total_cost += pricing_info_dict["total_cost"]
+    return determination, total_cost
+
+
+
+def make_api_call(model, role, user_prompt, system_prompt=None, image_paths=None):
+    return {
+        "result": model.call_model(user_prompt, system_prompt, image_paths),
+        "role": role
+        }
+
+
+
+def parallel_api_calls(model, api_params):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(make_api_call, model, params["role"], params["user_prompt"], params.get("system_prompt"), params.get("image_paths"))
+            for params in api_params
+        ]
+        results = [future.result() for future in concurrent.futures.as_completed(futures)]
+    return results
+
+
+def procrastination_sequence(user_spec, user_name, proctor_model, tts, voice, countdown_time, image_filepaths):
+    api_params = [
+        {"role": "heckler", "user_prompt": config["user_prompt_heckler"].format(user_spec=user_spec, user_name=user_name), "system_prompt": config["system_prompt_heckler"].format(user_name=user_name), "image_paths": image_filepaths},
+        {"role": "pledge", "user_prompt": config["user_prompt_pledge"].format(user_spec=user_spec, user_name=user_name), "system_prompt": config["system_prompt_pledge"], "image_paths": image_filepaths},
+        {"role": "countdown", "user_prompt": config["user_prompt_countdown"].format(user_spec=user_spec), "system_prompt": config["system_prompt_countdown"], "image_paths": image_filepaths}
+    ]
+
+    api_results = parallel_api_calls(proctor_model, api_params)
+
+    for api_result in api_results:
+        if api_result["role"] == "heckler":
+            heckler_message = api_result["result"]
+        if api_result["role"] == "pledge":
+            pledge_message = api_result["result"]
+        if api_result["role"] == "countdown":
+            countdown_message = api_result["result"]
+
+    if tts: 
+        voice_file = get_text_to_speech(heckler_message, voice) 
+        tts_thread = threading.Thread(target=play_text_to_speech, args=(voice_file,))
+        tts_thread.start()
+
+    procrastination_event = ProcrastinationEvent()
+    procrastination_event.show_popup(heckler_message, pledge_message)
+    procrastination_event.play_countdown(countdown_time, brief_message=f"You have {countdown_time} seconds to close "+countdown_message.strip())
+
+
+def control_sequence(call_when_procrastinate: callable, call_when_procrast_args, model, judge_model, total_cost, user_spec, print_CoT, user_prompt_label, capture_active_window=True):
+    # Capture only the active/focused window by default, or full screen if requested
+    if capture_active_window:
+        screenshots = take_screenshot_active_window()  # Returns list with one dict (active window)
+    else:
+        screenshots = take_screenshots()  # Returns list of dicts (all monitors)
+    filepaths = [shot["filepath"] for shot in screenshots]  # Extract file paths for the current pipeline
+    determination, total_cost = model_pipeline(model, judge_model, config[user_prompt_label].format(user_spec=user_spec), total_cost, filepaths, print_CoT=print_CoT)
+    print(f"{api_name_to_colloquial[model.model_name]} Determination: ", determination)
+        
+    if 'productive' in determination.lower():
+        pass
+    elif 'procrastinating' in determination.lower():
+        # Pass the full screenshots list to the procrastination sequence
+        if call_when_procrastinate.__name__ == "procrastination_sequence":
+            call_when_procrast_args.append(filepaths)
+        call_when_procrastinate(*call_when_procrast_args)
+    else:
+        print(f"{api_name_to_colloquial[model.model_name]} Determination: ERROR, LLM Output: ", determination)
+
+
+
+
+def main(model_name="gemini-2.0-flash", tts=False, cli_mode=False, voice="Patrick", delay_time=0, initial_delay=0, countdown_time=15, user_name="Procrastinator", print_CoT=False):
+
+    os.makedirs(os.path.dirname(os.path.dirname(__file__))+"/screenshots", exist_ok=True)
+
+    if cli_mode:
+        user_spec = input("What do you plan to work on?\n")
+    else:
+        user_spec = input()
+
+    proctor_model = create_model(model_name)
+
+    total_cost = 0
+
+    time.sleep(initial_delay)
+
+    while True:
+        procrast_seq_args = [user_spec, user_name, proctor_model, tts, voice, countdown_time]
+        control_args = [procrastination_sequence, procrast_seq_args, proctor_model, proctor_model, total_cost, user_spec, print_CoT, "user_prompt"]
+        control_sequence(*control_args, capture_active_window=True)
+
+        time.sleep(delay_time)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_name", help="Set model name", default="gemini-2.0-flash", type=str)
+    parser.add_argument("--tts", help="Enable heckling", action="store_true")
+    parser.add_argument("--voice", help="Set voice", default="Patrick", type=str)
+    parser.add_argument("--cli_mode", help="Enable CLI mode", action="store_true")
+    parser.add_argument("--delay_time", help="Set delay time", default=0, type=int)
+    parser.add_argument("--initial_delay", help="Initial delay so user can open relevant apps", default=0, type=int)
+    parser.add_argument("--countdown_time", help="Set countdown time", default=15, type=int)
+    parser.add_argument("--user_name", help="Set user name", default="Procrastinator", type=str)
+    parser.add_argument("--print_CoT", help="Show model's chain of thought", action="store_true")
+
+    args = parser.parse_args()
+    main(model_name=args.model_name, tts=args.tts, cli_mode=args.cli_mode, voice=args.voice, delay_time=args.delay_time, initial_delay=args.initial_delay, countdown_time=args.countdown_time, user_name=args.user_name, print_CoT=args.print_CoT)

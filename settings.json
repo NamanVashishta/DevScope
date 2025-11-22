@@ -1,0 +1,1 @@
+{"model": "gemini-2.0-flash", "tts": false, "voice": "Patrick", "cli_mode": false, "delay_time": 20, "initial_delay": 0, "countdown_time": 15, "user_name": "Procrastinator", "print_CoT": false}

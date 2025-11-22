@@ -1,0 +1,8 @@
+focusenv/
+__pycache__/
+*.pyc
+.DS_Store
+screenshots/
+yell_voice.*
+*.mp3
+*.wav
