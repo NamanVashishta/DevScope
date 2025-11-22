@@ -11,8 +11,8 @@ DevScope currently targets macOS Sequoia/Sonoma. Follow these steps to go from c
 ## 2. Clone and bootstrap
 
 ```bash
-git clone <repo-url>
-cd Transparent-Focus-Agent
+git clone git@github.com:NamanVashishta/DevScope.git
+cd DevScope
 python3 -m venv focusenv
 source focusenv/bin/activate
 pip install --upgrade pip

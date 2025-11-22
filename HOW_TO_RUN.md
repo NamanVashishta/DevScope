@@ -7,7 +7,7 @@ DevScope is a macOS-native recorder + agentic layer for engineering teams. This 
 ## 1. Open the project
 
 ```bash
-cd /path/to/Transparent-Focus-Agent
+cd /path/to/DevScope
 ```
 
 ## 2. Activate the virtualenv
@@ -47,7 +47,7 @@ python3 src/ui.py
 
 Single-line launch:
 ```bash
-cd /path/to/Transparent-Focus-Agent && \
+cd /path/to/DevScope && \
 source focusenv/bin/activate && \
 export GEMINI_API_KEY="..." && \
 export SLACK_BOT_TOKEN="..." && \

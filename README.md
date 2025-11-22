@@ -1,6 +1,6 @@
 # 👁️ DevScope: The Visual Cortex for Engineering Teams
 
-![License](https://img.shields.io/badge/license-MIT-green)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![AI](https://img.shields.io/badge/Powered%20by-Gemini%202.0%20Flash-orange)
 ![Status](https://img.shields.io/badge/Hackathon-Cerebral%20Valley-purple)
@@ -79,8 +79,8 @@ DevScope’s **Hybrid Ring Buffer** samples the screen every 10 s, labels fram
 
 ```bash
 # 1. Clone
-git clone https://github.com/yourusername/devscope.git
-cd devscope
+git clone git@github.com:NamanVashishta/DevScope.git
+cd DevScope
 
 # 2. Install
 python3 -m venv focusenv && source focusenv/bin/activate
@@ -108,6 +108,13 @@ Grant Screen Recording in **System Settings → Privacy & Security → Screen Re
 
 ---
 
+## 📚 Additional Docs
+
+- [Quick Start](QUICK_START.md) – Fastest path from clone to running the UI.
+- [How to Run](HOW_TO_RUN.md) – Detailed runbook with troubleshooting tips.
+
+---
+
 ## 🗺️ Roadmap
 
 - [ ] Buffer analytics (flow vs fragmentation heatmaps)  
@@ -119,32 +126,7 @@ Grant Screen Recording in **System Settings → Privacy & Security → Screen Re
 
 ## 📄 License
 
-DevScope is released under the **MIT License** (see `LICENSE`).  
-If you need the text inline:
-
-```
-MIT License
-
-Copyright (c) 2025 Naman Vashishta (Team DevScope)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+DevScope is released under the [MIT License](LICENSE).
 
 ---
 
