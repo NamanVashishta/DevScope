@@ -58,6 +58,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 - **Deep Work Filter:** Metadata is uploaded only if the frame is aligned with the stated goal. Social media, banking, or idle states never leave the laptop.  
 - **Flexible Schema:** Each document stores timestamp, project, technical context, and alignment score—perfect for Visual RAG without schema migrations.  
 - **Org-Level Tagging:** Every record automatically carries the NYU team org tag plus `user_id` and `project_name`, so queries can scope to a squad or span the entire company.
+- **Project Discovery:** The `list_projects()` method queries distinct project names from MongoDB, enabling the Oracle UI to show projects that any team member has worked on, not just local sessions.
 
 ### 3. Privacy Firewall
 - **Local Privacy Classifier:** `DEVSCOPE_PRIVACY_APPS` opt-out list halts capture before the frame is saved.  
@@ -67,7 +68,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 
 ### 4. Collaborative Surfaces
 - **Mission Control UI (`src/ui.py`):** PyQt dashboard for multi-session management, live logs, and git trigger status.  
-- **Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers.  
+- **Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers. The project dropdown automatically combines projects from your local sessions with projects discovered in MongoDB, so you can query work from any team member across the organization.  
 - **Ghost Team Seeder (`scripts/ghost_team.py`):** Comprehensive seed data generator that creates realistic activity logs and session summaries for 7 team personas (Frontend, Backend, DevOps, Mobile, Data, Full-stack, QA). Generates 500-1000+ entries across 30 days with complete ActivityRecord fields including error codes, function targets, documentation URLs, and focus bounds. Includes session summaries matching batch.py format.
 
 
@@ -89,7 +90,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 | `src/session.py` | Data model for multi-session buffers, temp folders, git roots. |
 | `src/ui.py` | Mission Control (sessions/logs) + Hive Mind Oracle tab. |
 | `src/triggers.py` | Per-session git watcher emitting `.devscope/context-<hash>.md`. |
-| `src/db.py` | MongoDB Atlas client (publish/query). |
+| `src/db.py` | MongoDB Atlas client (publish/query/list projects). |
 | `src/oracle.py` | RAG wrapper that turns Hive Mind history into natural language answers. |
 | `scripts/ghost_team.py` | Enhanced seed data generator with 7 team personas, comprehensive ActivityRecord fields, realistic time distribution, and session summaries. |
 
