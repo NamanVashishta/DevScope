@@ -11,6 +11,7 @@ import google.generativeai as genai
 
 from db import AtlasClient
 from monitor import VisualMonitor
+from session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ Context Score: (0-10, how focused was this session based on the filtered evidenc
 
             minutes = self._calculate_time_window_minutes(frame_paths)
             identity = self._identity_snapshot()
-            self._persist_summary(identity, session.id, summary_text, minutes)
+            self._persist_summary(identity, session, summary_text, minutes)
             logger.info("Batch summary stored for session %s.", session.id)
             return summary_text
         finally:
@@ -190,7 +191,7 @@ Context Score: (0-10, how focused was this session based on the filtered evidenc
     def _persist_summary(
         self,
         identity: dict,
-        session_id: str,
+        session: Session,
         summary_text: str,
         minutes: int,
     ) -> None:
@@ -199,7 +200,10 @@ Context Score: (0-10, how focused was this session based on the filtered evidenc
         document = {
             "org_id": identity.get("org_id"),
             "user_id": identity.get("user_id"),
-            "session_id": session_id,
+            "session_id": session.id,
+            "project_name": session.project_name,
+            "session_goal": session.goal,
+            "repo_path": session.repo_path,
             "timestamp": datetime.utcnow(),
             "summary_text": summary_text,
             "time_range_minutes": minutes,

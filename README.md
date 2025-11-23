@@ -41,6 +41,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 ### 1. Dual-Context Visual Engine (`src/monitor.py`)
 - **Panoramic + Resized Input:** `mss` captures the stitched virtual desktop (`monitors[0]`), then downsamples to 1080p via Pillow so Gemini never chokes on 4K dual-monitor payloads while text stays crisp.  
 - **Foveal Focus Telemetry:** AppKit/Quartz provides the active app and frontmost window title, giving Gemini an authoritative “what the engineer is actually touching” signal.  
+- **Focus Bounds Snapshot:** An `ActiveWindowInspector` caches the frontmost window geometry each cycle, reuses it for the privacy filter, and forwards human-readable bounds to Gemini + the Mission Control UI (look for the new “Active Focus” chip and window-tooltips in the buffer).  
 - **Smart Extractor Prompting:** A senior-auditor style system prompt instructs Gemini to trust the active focus, describe the exact action/target (“Editing the JSON schema in `src/monitor.py`”), and ignore background noise (Spotify, Discord) when developer tools are foregrounded.  
 - **Ring Buffer & Auto-Cleanup:** Each session’s deque stores ~30 minutes of entries; when it overflows we evict the oldest record *and* delete its PNG, guaranteeing bounded disk usage even during marathon sessions.
 
@@ -60,7 +61,8 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 
 ### 3. Privacy Firewall
 - **Local Privacy Classifier:** `DEVSCOPE_PRIVACY_APPS` opt-out list halts capture before the frame is saved.  
-- **No Screenshots in the Cloud:** Only the JSON insights travel to Atlas; raw images remain local and expire with the ring buffer.  
+- **Deep/Distracted Gate:** The Smart Extractor labels every frame with `deep_work_state` + `privacy_state`. Distracted frames have their screenshots scrubbed locally and never reach Mongo, Git context reports, or batch summaries.  
+- **No Screenshots in the Cloud:** Only the structured JSON travels to Atlas; raw images remain local and expire with the ring buffer.  
 - **Maker-First Controls:** We verify *Deep Work* before we verify *Upload*.
 
 ### 4. Collaborative Surfaces
@@ -74,9 +76,9 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 ## 🏗️ Architecture at a Glance
 
 1. **Capture:** Quartz/AppKit + `mss` → `temp_disk/<session>/frame_<timestamp>.png`.  
-2. **Label:** Gemini 2.0 Flash → `activity_type`, `technical_context`, `alignment_score`, `is_deep_work`, `active_app`, `window_title`.  
+2. **Label:** Gemini 2.0 Flash → `activity_type`, `technical_context`, `error_code`, `function_target`, `documentation_title/url`, `alignment_score`, `deep_work_state`, `privacy_state`, `active_app`, `window_title`.  
 3. **Buffer:** `collections.deque(maxlen=180)` per session holds ~30 minutes; popping deletes the screenshot.  
-4. **Sync:** Deep work entries → MongoDB Atlas via `HiveMindClient`.  
+4. **Sync:** Only entries with `privacy_state="allowed"` → MongoDB Atlas via `HiveMindClient`.  
 5. **Query:** Oracle UI pulls scoped history from Atlas and feeds it to Gemini for answer synthesis.
 
 ### Component Map
@@ -91,21 +93,42 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 | `src/oracle.py` | RAG wrapper that turns Hive Mind history into natural language answers. |
 | `scripts/ghost_team.py` | Synthetic personas (Alice, Bob) for demo seeding. |
 
+### Canonical Activity Schema
+
+Every capture resolves into a single `ActivityRecord` (`src/activity_schema.py`). Each record pins:
+
+- **Chronology:** `timestamp`, `session_id`, `project_name`, `session_goal`, `repo_path`, and `project_slug`.
+- **Action:** `task`, `activity_type`, `technical_context`, plus precise `function_target`, `error_code`, and `documentation_title`/`documentation_url`.
+- **Focus:** `app_name`, `active_app`, `window_title`, and pixel `focus_bounds`.
+- **Privacy:** `alignment_score`, `is_deep_work`, `deep_work_state`, `privacy_state`, and source tags.
+
+The real-time Smart Extractor, the Git 30‑minute reporter, batch summaries, and ghost data all emit this schema, so downstream surfaces never guess field names again.
+
 Example metadata stored in MongoDB:
 ```json
 {
   "timestamp": "2025-11-22T18:14:52Z",
-  "task": "Debugging",
-  "summary": "Debugging Stripe Error 409",
-  "technical_context": "payments/api.py:422",
+  "session_id": "sess_123",
+  "project_name": "Payments-API",
+  "session_goal": "Ship retry logic",
+  "repo_path": "/Users/naman/dev/payments",
+  "task": "Fixing Stripe webhook retries",
+  "activity_type": "DEBUGGING",
+  "technical_context": "jobs/worker.py > handle_webhook()",
+  "error_code": "HTTP 409",
+  "function_target": "worker.py > handle_webhook",
+  "documentation_title": "Stripe Docs – Idempotency Keys",
+  "documentation_url": "https://stripe.com/docs/idempotency",
   "app_name": "VS Code",
   "active_app": "VS Code",
-  "window_title": "auth.py — DevScope",
+  "window_title": "worker.py — VS Code",
   "alignment_score": 92,
   "is_deep_work": true,
+  "deep_work_state": "deep_work",
+  "privacy_state": "allowed",
   "user_id": "naman",
   "org_id": "demo-org",
-  "project_name": "Payments-API"
+  "source": "devscope-vision"
 }
 ```
 
@@ -138,7 +161,6 @@ Example metadata stored in MongoDB:
 - macOS Sequoia/Sonoma with Screen Recording permission  
 - Python 3.10+  
 - `GEMINI_API_KEY` (Gemini 2.0 Flash)  
-- `SLACK_BOT_TOKEN` (DM scopes for auto replies)  
 - Optional: `ELEVEN_LABS_API_KEY` for legacy TTS  
 
 ### Quick Start
@@ -154,7 +176,6 @@ pip install -r requirements.txt
 
 # 3. Configure
 export GEMINI_API_KEY="AIza..."
-export SLACK_BOT_TOKEN="xoxb-..."
 
 # 4. Run
 python3 src/ui.py
@@ -175,15 +196,15 @@ Grant Screen Recording in **System Settings → Privacy & Security → Screen Re
 ---
 
 ## 📚 Additional Docs
-
 - [Quick Start](QUICK_START.md) – Fastest path from clone to running the UI.
 - [How to Run](HOW_TO_RUN.md) – Detailed runbook with troubleshooting tips.
+- `tests/test_active_window_inspector.py` – Unit checks for the Dual-Context snapshot/cache logic (safe to run via `python -m unittest tests/test_active_window_inspector.py`).
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] Slack routing per session + automatic context replies.  
+- [ ] Reintroduce async chat replies once the new privacy pipeline is battle-tested.  
 - [ ] Buffer analytics (flow vs fragmentation heatmaps).  
 - [ ] Privacy-first OCR redaction prior to Gemini upload.  
 - [ ] Windows/Linux capture via Win32 & X11 pipelines.  

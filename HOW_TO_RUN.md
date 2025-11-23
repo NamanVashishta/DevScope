@@ -25,7 +25,6 @@ Already have `focusenv/`? Just `source focusenv/bin/activate`.
 
 ```bash
 export GEMINI_API_KEY="AIza..."
-export SLACK_BOT_TOKEN="xoxb-..."
 # optional: export ELEVEN_LABS_API_KEY="eleven-..."
 ```
 
@@ -39,7 +38,7 @@ python3 src/ui.py
 
 - Click **Select Project Folder** → choose the repo to watch.
 - Press **Start Session** to spin up the monitor + triggers.
-- Watch the status log for buffer entries, Slack replies, and git context dumps.
+- Watch the status log for buffer entries and git context dumps.
 
 ---
 
@@ -50,7 +49,6 @@ Single-line launch:
 cd /path/to/DevScope && \
 source focusenv/bin/activate && \
 export GEMINI_API_KEY="..." && \
-export SLACK_BOT_TOKEN="..." && \
 python3 src/ui.py
 ```
 
@@ -59,8 +57,7 @@ python3 src/ui.py
 ## Settings you’ll see in the UI
 
 - **Capture cadence:** Seconds between screenshots (default 10).
-- **Deep work threshold:** Minimum consecutive “is_deep_work” entries before shielding Slack.
-- **Auto-answer toggle:** Enable/disable Slack automation.
+- **Deep work threshold:** Minimum consecutive “is_deep_work” entries before uploads resume.
 - **Privacy list:** Path to YAML file (coming soon) that blocks specific apps/URLs.
 
 ---
@@ -77,9 +74,8 @@ python3 src/ui.py
 - Reboot after granting permission if frames remain blank.
 - Verify `mss` can access multiple displays; disable Stage Manager temporarily if captures are offset.
 
-### Gemini/Slack failures
+### Gemini failures
 - Ensure `GEMINI_API_KEY` is valid and not rate-limited. Try `curl https://generativelanguage.googleapis.com/v1beta/models`.
-- For Slack, double-check the bot token scopes: `im:history`, `chat:write`, `users:read`.
 - Restart the UI after updating environment variables; the monitor inherits them only at launch.
 
 ---

@@ -8,11 +8,13 @@ from typing import List, Optional
 from PyQt5 import QtCore, QtGui, QtWidgets
 from qt_material import apply_stylesheet
 
+from activity_schema import ActivityRecord
 from db import HiveMindClient
-from monitor import VisualMonitor, VisualEntry
+from monitor import VisualMonitor
 from oracle import OracleService
 from settings_store import load_settings, save_settings
-from triggers import GitTrigger, SlackWatcher
+from session_store import load_saved_projects, save_projects_state
+from triggers import GitTrigger
 
 
 class SignalBus(QtCore.QObject):
@@ -40,7 +42,6 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self._apply_identity_to_systems()
         self._monitor_running = False
         self.git_trigger: GitTrigger | None = None
-        self.slack_watcher: SlackWatcher | None = None
 
         self.bus = SignalBus()
         self.bus.log.connect(self._append_log)
@@ -52,6 +53,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self._session_running = False
 
         self._build_layout()
+        self._restore_projects_from_disk()
         self._refresh_session_combo()
 
     # UI ------------------------------------------------------------------
@@ -106,16 +108,82 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         session_label = QtWidgets.QLabel("Projects / Sessions")
         session_label.setFont(QtGui.QFont("Inter", 12, QtGui.QFont.Bold))
         self.session_combo = QtWidgets.QComboBox()
+        self.session_combo.setStyleSheet(
+            """
+            QComboBox {
+                background-color: #1e293b;
+                color: #f8fafc;
+                border: 1px solid #3b82f6;
+                border-radius: 10px;
+                padding: 6px 10px;
+                min-height: 32px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #0f172a;
+                color: #e2e8f0;
+                selection-background-color: #38bdf8;
+                selection-color: #0f172a;
+                border-radius: 10px;
+                padding: 6px;
+            }
+            """
+        )
         self.session_combo.currentIndexChanged.connect(self._handle_session_combo_change)
+        self.session_combo.setPlaceholderText("No sessions yet — add one below")
         self.new_session_btn = QtWidgets.QPushButton("＋ New Session")
+        self.new_session_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #0ea5e9;
+                color: #0f172a;
+                font-weight: 700;
+                border-radius: 12px;
+                padding: 10px 16px;
+            }
+            """
+        )
         self.new_session_btn.clicked.connect(self._open_new_session_dialog)
         self.delete_session_btn = QtWidgets.QPushButton("🗑")
+        self.complete_session_btn = QtWidgets.QPushButton("Complete")
+        self.complete_session_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #f59e0b;
+                color: #0f172a;
+                border-radius: 12px;
+                padding: 10px 16px;
+                font-weight: 600;
+            }
+            QPushButton:disabled {
+                background-color: #1f2937;
+                color: #94a3b8;
+            }
+            """
+        )
+        self.complete_session_btn.clicked.connect(self._complete_current_session)
+        self.delete_session_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #1e293b;
+                color: #f8fafc;
+                border-radius: 12px;
+                padding: 10px 16px;
+            }
+            QPushButton:disabled {
+                color: #475569;
+            }
+            """
+        )
         self.delete_session_btn.clicked.connect(self._delete_current_session)
         self.delete_session_btn.setToolTip("Delete selected session")
 
         session_bar.addWidget(session_label)
         session_bar.addWidget(self.session_combo, 1)
         session_bar.addWidget(self.new_session_btn)
+        session_bar.addWidget(self.complete_session_btn)
         session_bar.addWidget(self.delete_session_btn)
         layout.addLayout(session_bar)
 
@@ -123,27 +191,91 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         controls = QtWidgets.QHBoxLayout()
         self.start_btn = QtWidgets.QPushButton("Start Session")
         self.start_btn.setMinimumHeight(48)
+        self.start_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #22c55e;
+                color: #0f172a;
+                font-weight: 700;
+                border-radius: 12px;
+            }
+            QPushButton:disabled {
+                background-color: #1f2937;
+                color: #94a3b8;
+            }
+            """
+        )
         self.start_btn.clicked.connect(self._start_session)
 
         self.stop_btn = QtWidgets.QPushButton("Stop Session")
         self.stop_btn.setEnabled(False)
         self.stop_btn.setMinimumHeight(48)
+        self.stop_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #ef4444;
+                color: #0f172a;
+                font-weight: 700;
+                border-radius: 12px;
+            }
+            QPushButton:disabled {
+                background-color: #1f2937;
+                color: #94a3b8;
+            }
+            """
+        )
         self.stop_btn.clicked.connect(self._stop_session)
 
         controls.addWidget(self.start_btn)
         controls.addWidget(self.stop_btn)
         layout.addLayout(controls)
 
+        self.focus_chip = QtWidgets.QLabel("Active Focus: Unknown")
+        self.focus_chip.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        self.focus_chip.setStyleSheet(
+            "border-radius: 12px; padding: 6px 12px; background-color: #2563eb; color: #f8fafc; font-weight: 600;"
+        )
+        layout.addWidget(self.focus_chip)
+
         # Buffer table
         buffer_label = QtWidgets.QLabel("Visual Ring Buffer (latest 10)")
         buffer_label.setFont(QtGui.QFont("Inter", 14, QtGui.QFont.Bold))
         layout.addWidget(buffer_label)
 
-        self.buffer_table = QtWidgets.QTableWidget(0, 4)
-        self.buffer_table.setHorizontalHeaderLabels(["Timestamp", "App", "Task", "Deep Work"])
-        self.buffer_table.horizontalHeader().setStretchLastSection(True)
-        self.buffer_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self.buffer_table = QtWidgets.QTableWidget(0, 7)
+        self.buffer_table.setHorizontalHeaderLabels(
+            ["Timestamp", "Task", "Activity Type", "LLM App", "Focus App", "Error / Docs", "Privacy"]
+        )
+        self.buffer_table.setAlternatingRowColors(True)
+        self.buffer_table.setStyleSheet(
+            """
+            QTableWidget {
+                background-color: #0f172a;
+                alternate-background-color: #1e293b;
+                color: #e2e8f0;
+                gridline-color: #334155;
+            }
+            QHeaderView::section {
+                background-color: #1d4ed8;
+                color: #f8fafc;
+                padding: 6px;
+                border: none;
+            }
+            QTableWidget::item:selected {
+                background-color: #38bdf8;
+                color: #0f172a;
+            }
+            """
+        )
+        header = self.buffer_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.Interactive)
+        self.buffer_table.setColumnWidth(5, 240)
+        self.buffer_table.verticalHeader().setVisible(False)
+        self.buffer_table.verticalHeader().setDefaultSectionSize(56)
         self.buffer_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.buffer_table.setWordWrap(True)
         layout.addWidget(self.buffer_table)
 
         # Log panel
@@ -154,6 +286,16 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(500)
+        self.log_view.setStyleSheet(
+            """
+            QPlainTextEdit {
+                background-color: #0b1120;
+                color: #e2e8f0;
+                border-radius: 10px;
+                padding: 10px;
+            }
+            """
+        )
         layout.addWidget(self.log_view)
 
         return widget
@@ -217,17 +359,6 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             self._monitor_running = True
             self._start_git_trigger_for_session(session_id)
 
-            slack_token = os.environ.get("SLACK_BOT_TOKEN")
-            if slack_token:
-                self.slack_watcher = SlackWatcher(
-                    monitor=self.monitor,
-                    slack_token=slack_token,
-                    status_callback=self._log_async,
-                )
-                self.slack_watcher.start()
-            else:
-                self._log_async("SLACK_BOT_TOKEN not set; Slack watcher disabled.")
-
             self._session_running = True
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
@@ -239,9 +370,6 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             self._stop_session()
 
     def _stop_session(self) -> None:
-        if self.slack_watcher:
-            self.slack_watcher.stop()
-            self.slack_watcher = None
         if self.git_trigger:
             self.git_trigger.stop()
             self.git_trigger = None
@@ -261,18 +389,26 @@ class DevScopeWindow(QtWidgets.QMainWindow):
 
     # Callbacks -----------------------------------------------------------
 
-    def _handle_entry(self, entry: VisualEntry) -> None:
+    def _handle_entry(self, entry: ActivityRecord) -> None:
         if not self.monitor:
             return
         active_id = self.monitor.get_active_session_id()
         if not active_id or entry.session_id != active_id:
             return
 
-        entries = [e.to_dict() for e in self.monitor.snapshot(active_id)]
+        entries = [e.to_ui_dict() for e in self.monitor.snapshot(active_id)]
         self.bus.buffer.emit(entries)
         self.bus.log.emit(
-            f"[{entry.active_app}] {entry.task} | {entry.app} | deep_work={entry.is_deep_work}"
+            f"[{entry.active_app}] {entry.task} | {entry.app_name} | deep_work={entry.is_deep_work}"
         )
+        focus_text = entry.active_app or "Unknown"
+        window_text = entry.window_title or "Unknown"
+        if hasattr(self, "focus_chip"):
+            self.focus_chip.setText(f"Active Focus: {focus_text} — {window_text}")
+            if entry.focus_bounds:
+                self.focus_chip.setToolTip(f"Bounds: {entry.focus_bounds}")
+            else:
+                self.focus_chip.setToolTip("")
 
     def _append_log(self, text: str) -> None:
         self.log_view.appendPlainText(text)
@@ -282,12 +418,56 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         latest = entries[-10:]
         self.buffer_table.setRowCount(len(latest))
         for row, entry in enumerate(reversed(latest)):
+            self.buffer_table.setRowHeight(row, 56)
             self.buffer_table.setItem(row, 0, QtWidgets.QTableWidgetItem(entry["timestamp"]))
-            self.buffer_table.setItem(row, 1, QtWidgets.QTableWidgetItem(entry["app"]))
-            self.buffer_table.setItem(row, 2, QtWidgets.QTableWidgetItem(entry["task"]))
-            deep_item = QtWidgets.QTableWidgetItem("Yes" if entry["is_deep_work"] else "No")
-            deep_item.setForeground(QtGui.QColor("#10b981" if entry["is_deep_work"] else "#f87171"))
-            self.buffer_table.setItem(row, 3, deep_item)
+            self.buffer_table.setItem(row, 1, QtWidgets.QTableWidgetItem(entry["task"]))
+            activity_type = entry.get("activity_type", "UNKNOWN")
+            self.buffer_table.setItem(row, 2, QtWidgets.QTableWidgetItem(activity_type))
+
+            app_label = entry.get("app_name") or entry.get("app") or "Unknown"
+            app_item = QtWidgets.QTableWidgetItem(app_label)
+            self.buffer_table.setItem(row, 3, app_item)
+
+            focus_app = entry.get("active_app") or "Unknown"
+            window_title = entry.get("window_title") or "Unknown"
+            focus_item = QtWidgets.QTableWidgetItem(focus_app)
+            focus_item.setToolTip(window_title)
+            bounds = entry.get("focus_bounds")
+            if bounds:
+                focus_item.setToolTip(f"{window_title}\nBounds: {bounds}")
+            self.buffer_table.setItem(row, 4, focus_item)
+
+            error_label = self._format_kv("Error", entry.get("error_code"))
+            doc_label = self._format_kv("Doc", entry.get("documentation_title"))
+            error_text = f"{error_label}\n{doc_label}"
+            doc_url = entry.get("doc_url") or entry.get("documentation_url")
+            error_item = QtWidgets.QTableWidgetItem(error_text)
+            if doc_url:
+                error_item.setToolTip(doc_url)
+            self.buffer_table.setItem(row, 5, error_item)
+
+            privacy_state = entry.get("privacy_state", "allowed").title()
+            deep_state = entry.get("deep_work_state", "deep_work")
+            privacy_text = f"{privacy_state} / {deep_state}"
+            privacy_item = QtWidgets.QTableWidgetItem(privacy_text)
+            color = "#10b981" if entry.get("is_deep_work") else "#f87171"
+            if privacy_state.lower() != "allowed":
+                color = "#facc15"
+            privacy_item.setForeground(QtGui.QColor(color))
+            self.buffer_table.setItem(row, 6, privacy_item)
+
+    @staticmethod
+    def _format_kv(prefix: str, raw_value) -> str:
+        if raw_value is None:
+            return f"{prefix}: —"
+        text = str(raw_value).strip()
+        if not text or text in {"-", "—"}:
+            return f"{prefix}: —"
+        prefix_lower = f"{prefix.lower()}:"
+        lowered = text.lower()
+        if lowered.startswith(prefix_lower):
+            text = text[len(prefix) + 1 :].strip()
+        return f"{prefix}: {text or '—'}"
 
     def _update_status(self, state: str) -> None:
         color = "#10b981" if state == "Running" else "#4a5568"
@@ -296,6 +476,27 @@ class DevScopeWindow(QtWidgets.QMainWindow):
 
     def _log_async(self, text: str) -> None:
         self.bus.log.emit(text)
+
+    def _restore_projects_from_disk(self) -> None:
+        saved = load_saved_projects()
+        restored = 0
+        for entry in saved:
+            project = entry.get("project_name")
+            repo = entry.get("repo_path")
+            if not project or not repo:
+                continue
+            goal = entry.get("goal") or "Resume work"
+            try:
+                self.monitor.create_session(project_name=project, repo_path=repo, goal=goal)
+                restored += 1
+            except Exception as exc:
+                print(f"Failed to restore project '{project}': {exc}")
+        if restored:
+            self._log_async(f"Restored {restored} project(s) from disk.")
+
+    def _persist_projects_state(self) -> None:
+        metadata = self.monitor.get_sessions_metadata()
+        save_projects_state(metadata)
 
     def _apply_identity_to_systems(self) -> None:
         """Propagate identity settings to the monitor and other services."""
@@ -385,9 +586,9 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         dialog = NewSessionDialog(existing_projects, self)
         if dialog.exec_() != QtWidgets.QDialog.Accepted:
             return
-        project_name, session_name, goal, repo_path = dialog.values()
-        if not project_name or not session_name or not goal or not repo_path:
-            QtWidgets.QMessageBox.warning(self, "Missing Data", "Provide project, session, goal, and repository path.")
+        project_name, goal, repo_path = dialog.values()
+        if not project_name or not goal or not repo_path:
+            QtWidgets.QMessageBox.warning(self, "Missing Data", "Provide project, goal, and repository path.")
             return
         if not os.path.isdir(os.path.join(repo_path, ".git")):
             QtWidgets.QMessageBox.warning(self, "Invalid Repo", "Selected folder does not contain a .git directory.")
@@ -395,12 +596,12 @@ class DevScopeWindow(QtWidgets.QMainWindow):
 
         session = self.monitor.create_session(
             project_name=project_name,
-            session_name=session_name,
             repo_path=repo_path,
             goal=goal,
         )
-        self._log_async(f"Session '{session_name}' created under project '{project_name}'.")
+        self._log_async(f"Session created under project '{project_name}' with goal '{goal}'.")
         self._refresh_session_combo(select_id=session.id)
+        self._persist_projects_state()
         if self._monitor_running:
             self._switch_to_session(session.id, clear_log=True)
 
@@ -423,6 +624,30 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.monitor.delete_session(session_id)
         self._log_async("Session deleted.")
         self._refresh_session_combo()
+        self._persist_projects_state()
+
+        new_session_id = self._current_session_id()
+        if self._monitor_running and new_session_id:
+            self._switch_to_session(new_session_id, clear_log=True)
+        elif self._monitor_running and not new_session_id:
+            self._stop_session()
+
+    def _complete_current_session(self) -> None:
+        session_id = self._current_session_id()
+        if not session_id:
+            return
+
+        if (
+            self._session_running
+            and self.monitor
+            and self.monitor.get_active_session_id() == session_id
+        ):
+            self._stop_session()
+
+        self.monitor.delete_session(session_id)
+        self._log_async("Session completed and removed.")
+        self._refresh_session_combo()
+        self._persist_projects_state()
 
         new_session_id = self._current_session_id()
         if self._monitor_running and new_session_id:
@@ -437,16 +662,17 @@ class DevScopeWindow(QtWidgets.QMainWindow):
 
         for meta in metadata:
             project = meta.get("project_name") or "Untitled Project"
-            session = meta.get("session_name") or "Session"
+            goal = meta.get("goal") or "Goal"
             repo_label = Path(meta["repo_path"]).name
-            label = f"{project} • {session} ({repo_label})"
+            label = f"{project} – {goal} ({repo_label})"
             self.session_combo.addItem(label, meta["id"])
 
         if not metadata:
-            self.session_combo.addItem("No sessions", None)
+            self.session_combo.addItem("No sessions yet — click New Session", None)
             self.session_combo.setCurrentIndex(0)
             self.session_combo.blockSignals(False)
             self.delete_session_btn.setEnabled(False)
+            self.complete_session_btn.setEnabled(False)
             self.start_btn.setEnabled(False)
             return
 
@@ -455,6 +681,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.session_combo.setCurrentIndex(index)
         self.session_combo.blockSignals(False)
         self.delete_session_btn.setEnabled(True)
+        self.complete_session_btn.setEnabled(True)
         if not self._session_running:
             self.start_btn.setEnabled(True)
         self._switch_to_session(self.session_combo.itemData(index), clear_log=True)
@@ -516,9 +743,6 @@ class NewSessionDialog(QtWidgets.QDialog):
         self.project_combo.addItems(projects)
         layout.addRow("Project", self.project_combo)
 
-        self.session_name_input = QtWidgets.QLineEdit()
-        layout.addRow("Session Name", self.session_name_input)
-
         self.goal_input = QtWidgets.QLineEdit()
         layout.addRow("Session Goal", self.goal_input)
 
@@ -536,14 +760,18 @@ class NewSessionDialog(QtWidgets.QDialog):
         layout.addRow(buttons)
 
     def _browse_repo(self) -> None:
-        path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select repository")
-        if path:
-            self.repo_input.setText(path)
+        dialog = QtWidgets.QFileDialog(self, "Select repository")
+        dialog.setFileMode(QtWidgets.QFileDialog.Directory)
+        dialog.setOption(QtWidgets.QFileDialog.ShowDirsOnly, True)
+        dialog.setOption(QtWidgets.QFileDialog.DontUseNativeDialog, True)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            selected = dialog.selectedFiles()
+            if selected:
+                self.repo_input.setText(selected[0])
 
     def values(self) -> tuple[str, str, str, str]:
         return (
             self.project_combo.currentText().strip(),
-            self.session_name_input.text().strip(),
             self.goal_input.text().strip(),
             self.repo_input.text().strip(),
         )

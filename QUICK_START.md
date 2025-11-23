@@ -23,7 +23,6 @@ pip install -r requirements.txt
 
 ```bash
 export GEMINI_API_KEY="AIza..."
-export SLACK_BOT_TOKEN="xoxb-..."
 # optional: export ELEVEN_LABS_API_KEY="eleven-..."
 ```
 
@@ -41,20 +40,18 @@ python3 src/ui.py
 ```
 
 In the UI:
-- Click “Select Project Folder” and choose the repo whose commits/Slack replies you want DevScope to handle.
+- Click “Select Project Folder” and choose the repo you want DevScope to shadow.
 - Press “Start Session”. The monitor + triggers spin up, and the log panel will stream buffer summaries and events.
 
 ## 6. Demo script
 
 1. Open VS Code and a browser with docs. DevScope begins capturing every 10 s.
-2. Send yourself a Slack DM from another account. When you’re marked as deep work, DevScope auto-answers.
-3. Make a git commit. Check the generated Markdown context report under `<repo>/.devscope/context-<commit>.md`.
+2. Make a git commit. Check the generated Markdown context report under `<repo>/.devscope/context-<commit>.md` for the expanded timeline + AI summary.
 
 ## Troubleshooting
 
-- **No screenshots:** Re-run after granting Screen Recording; check Console for `CGWindowList` permission errors.
+- **No frames in `temp_disk/`:** Re-run after granting Screen Recording; check Console for `CGWindowList` permission errors.
 - **Gemini errors:** Verify `GEMINI_API_KEY` and network connectivity. Try `pip install google-generativeai==0.5.*`.
-- **Slack auth issues:** Confirm the bot token includes `im:history`, `chat:write`, and the bot is invited to your DM.
 - **PyQt crash:** Ensure `qt-material` is installed (`pip install qt-material`) and macOS is not blocking unsigned apps.
 
 Still stuck? See `HOW_TO_RUN.md` or run `python3 scripts/devscope_demo.py` (coming soon) for a mocked walkthrough.

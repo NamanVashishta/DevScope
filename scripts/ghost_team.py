@@ -51,7 +51,7 @@ def build_payload(
     minutes_offset: int,
 ) -> Dict:
     timestamp = datetime.utcnow() - timedelta(minutes=minutes_offset)
-    task, summary, technical_context, app_name = entry
+    activity_type, summary, technical_context, app_name = entry
     return {
         "timestamp": timestamp,
         "session_id": f"ghost-{persona['user_id']}",
@@ -61,14 +61,17 @@ def build_payload(
         "user_id": persona["user_id"],
         "user_display": persona["user_display"],
         "org_id": org_id,
-        "summary": summary,
-        "task": task,
+        "summary": f"{summary} | {technical_context}",
+        "task": summary,
+        "activity_type": activity_type,
         "technical_context": technical_context,
         "app_name": app_name,
         "active_app": app_name,
         "window_title": summary,
         "alignment_score": random.randint(70, 95),
         "is_deep_work": True,
+        "deep_work_state": "deep_work",
+        "privacy_state": "allowed",
         "source": "ghost-team",
     }
 
