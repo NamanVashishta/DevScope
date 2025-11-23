@@ -526,7 +526,18 @@ class VisualMonitor:
     def _pick_error_code(metadata: Dict, technical_context: str) -> Optional[str]:
         code = metadata.get("error_code")
         if isinstance(code, str) and code.strip():
-            return code.strip()
+            code = code.strip()
+            # Filter out Qt warning messages
+            code_lower = code.lower()
+            if any(warning in code_lower for warning in [
+                "unknown property",
+                "qt.qpa",
+                "populating font",
+                "box-shadow",
+                "css property"
+            ]):
+                return None
+            return code
         if isinstance(code, int):
             return str(code)
         if technical_context:
