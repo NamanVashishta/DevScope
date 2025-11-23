@@ -68,7 +68,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 ### 4. Collaborative Surfaces
 - **Mission Control UI (`src/ui.py`):** PyQt dashboard for multi-session management, live logs, and git trigger status.  
 - **Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers.  
-- **Ghost Team Seeder (`scripts/ghost_team.py`):** CLI utility that injects believable Alice/Bob activity for demos or local testing.
+- **Ghost Team Seeder (`scripts/ghost_team.py`):** Comprehensive seed data generator that creates realistic activity logs and session summaries for 7 team personas (Frontend, Backend, DevOps, Mobile, Data, Full-stack, QA). Generates 500-1000+ entries across 30 days with complete ActivityRecord fields including error codes, function targets, documentation URLs, and focus bounds. Includes session summaries matching batch.py format.
 
 
 ---
@@ -91,7 +91,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 | `src/triggers.py` | Per-session git watcher emitting `.devscope/context-<hash>.md`. |
 | `src/db.py` | MongoDB Atlas client (publish/query). |
 | `src/oracle.py` | RAG wrapper that turns Hive Mind history into natural language answers. |
-| `scripts/ghost_team.py` | Synthetic personas (Alice, Bob) for demo seeding. |
+| `scripts/ghost_team.py` | Enhanced seed data generator with 7 team personas, comprehensive ActivityRecord fields, realistic time distribution, and session summaries. |
 
 ### Canonical Activity Schema
 
@@ -190,7 +190,14 @@ Grant Screen Recording in **System Settings → Privacy & Security → Screen Re
 1. Launch the UI, create or select a session, press **Start Session**.  
 2. Watch the Visual Ring Buffer populate with dual-context entries (task, active app, deep-work flag).  
 3. Trigger a git commit; inspect `.devscope/context-<hash>.md` for the frozen timeline.  
-4. Open the Hive Mind tab, seed ghost data if needed (`python scripts/ghost_team.py`).  
+4. Open the Hive Mind tab, seed ghost data if needed:
+   ```bash
+   # Generate ~840 activity entries and summaries for 7 team members across 30 days
+   python3 scripts/ghost_team.py --entries-per-user 120 --days 30
+   
+   # Customize: more entries, different time range, skip summaries
+   python3 scripts/ghost_team.py --entries-per-user 150 --days 60 --no-summaries
+   ```
 5. Ask the Oracle a scoped question and review the synthesized answer plus status log.
 
 ---
