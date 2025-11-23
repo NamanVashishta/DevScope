@@ -68,7 +68,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 
 ### 4. Collaborative Surfaces
 - **Mission Control UI (`src/ui.py`):** PyQt dashboard for multi-session management, live logs, and git trigger status.  
-- **Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers. The project dropdown automatically combines projects from your local sessions with projects discovered in MongoDB, so you can query work from any team member across the organization.  
+- **Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers with intelligent formatting. Features include: highlighted direct answers, section icons (📋 Summary, 👥 People, ⚠️ Risks, 🔔 Follow-Ups), smart section ordering (content-rich sections first), and automatic cleanup of duplicate/empty entries. The project dropdown automatically combines projects from your local sessions with projects discovered in MongoDB, so you can query work from any team member across the organization.  
 - **Ghost Team Seeder (`scripts/ghost_team.py`):** Comprehensive seed data generator that creates realistic activity logs and session summaries for 7 team personas (Frontend, Backend, DevOps, Mobile, Data, Full-stack, QA). Generates 500-1000+ entries across 30 days with complete ActivityRecord fields including error codes, function targets, documentation URLs, and focus bounds. Includes session summaries matching batch.py format.
 
 

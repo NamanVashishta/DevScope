@@ -137,16 +137,38 @@ class OracleService:
     def _build_system_prompt(self, scope: str, project_name: Optional[str], window: Optional[int]) -> str:
         scope_text = "organization-wide" if scope != "project" else f"project: {project_name}"
         window_text = f"last {window} hours" if window else "available history"
-        sections = "\n".join(f"- {name}: bullet list (or 'None')" for name in SECTION_ORDER)
+        sections = "\n".join(f"- {name}: bullet list of relevant items" for name in SECTION_ORDER)
         return (
             "You are DevScope's Team Oracle, an internal intelligence assistant.\n"
             f"- Scope: {scope_text}\n"
             f"- Time window: {window_text}\n\n"
+            "CRITICAL: Always answer the question directly and concisely FIRST, before any structured sections.\n"
+            "If the question asks for a count, number, or specific fact, provide that answer immediately at the start.\n"
+            "Make the direct answer clear and prominent.\n\n"
             "You are only allowed to answer using the provided logs and summaries.\n"
-            "Format the answer as Markdown with the following sections:\n"
-            f"{sections}\n"
-            "Always cite concrete names, repos, or tasks pulled from the context. "
-            "If data is missing, explicitly state 'None' for that section and avoid speculation."
+            "After the direct answer, format the detailed response as Markdown with the following sections:\n"
+            f"{sections}\n\n"
+            "Formatting rules (IMPORTANT):\n"
+            "- Use ## for section headers (e.g., ## Summary, ## People)\n"
+            "- Use - for bullet points when listing items\n"
+            "- If a section has NO content, write '## SectionName: None' on ONE line (not as a list item)\n"
+            "- If a section HAS content, list the items with - bullets and DO NOT include 'None' in the list\n"
+            "- Never include 'None' as a list item if there are actual items in that section\n"
+            "- If a section would only contain 'None', you may skip it entirely if it adds no value\n"
+            "- Always cite concrete names, repos, or tasks pulled from the context\n"
+            "- Avoid redundant 'None' entries - one per empty section is enough\n\n"
+            "Write naturally and conversationally. The direct answer should feel like a human response, not a template.\n\n"
+            "Example good format:\n"
+            "There are 3 people active in the organization: Charlie Kim, Eve Johnson, and Diana Patel.\n\n"
+            "## Summary\n"
+            "The team has been working on authentication improvements and resolving database deadlock issues.\n\n"
+            "## People\n"
+            "- Charlie Kim - Working on JWT authentication\n"
+            "- Eve Johnson - Debugging async/await race conditions\n"
+            "- Diana Patel - Resolving database deadlock issues\n\n"
+            "## Risks: None\n\n"
+            "## Follow-Ups: None\n\n"
+            "Remember: Be natural, concise, and helpful. The direct answer should directly address what was asked."
         )
 
     def _format_context_blocks(

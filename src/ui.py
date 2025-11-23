@@ -1,5 +1,6 @@
 import html
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -740,21 +741,28 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         question = payload.get("question") or ""
         answer = payload.get("answer") or ""
         scope_badge = self._format_scope_badge(payload)
+        # Clean and render the answer
         answer_html = self._render_oracle_markdown(answer)
         preview_html = ""
         preview = payload.get("context_preview") or []
         if preview:
-            preview_lines = "".join(f"<li>{html.escape(item)}</li>" for item in preview)
+            preview_lines = "".join(f"<li style='margin:2px 0;'>{html.escape(item)}</li>" for item in preview)
             preview_html = (
-                "<div style='margin-top:10px; font-size:12px; color:#94a3b8;'>Context Sample:"
-                f"<ul>{preview_lines}</ul></div>"
+                "<div style='margin-top:16px; padding-top:12px; border-top:1px solid rgba(56,189,248,0.1); font-size:12px; color:#94a3b8;'>"
+                "<strong>Context Sample:</strong>"
+                f"<ul style='margin:6px 0; padding-left:20px;'>{preview_lines}</ul></div>"
             )
 
         card_html = (
-            "<div style='border:1px solid rgba(56, 189, 248, 0.2); border-radius:12px; padding:12px; margin-bottom:12px;'>"
-            f"<div style='font-size:12px; color:#94a3b8;'>{scope_badge}</div>"
-            f"<div style='margin-top:6px;'><b>Q:</b> {html.escape(question)}</div>"
-            f"<div style='margin-top:10px; line-height:1.4;'>{answer_html}</div>"
+            "<div style='border:1px solid rgba(56, 189, 248, 0.2); border-radius:12px; padding:18px; margin-bottom:16px; "
+            "background:linear-gradient(135deg, rgba(15,23,42,0.6) 0%, rgba(15,23,42,0.4) 100%); "
+            "box-shadow:0 2px 8px rgba(0,0,0,0.1);'>"
+            f"<div style='font-size:11px; color:#94a3b8; margin-bottom:10px; letter-spacing:0.5px;'>{scope_badge}</div>"
+            f"<div style='margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid rgba(56,189,248,0.1);'>"
+            f"<b style='color:#38bdf8; font-size:13px;'>Q:</b> "
+            f"<span style='color:#e2e8f0; font-size:14px; font-weight:500;'>{html.escape(question)}</span>"
+            f"</div>"
+            f"<div style='line-height:1.6;'>{answer_html}</div>"
             f"{preview_html}"
             "</div>"
         )
@@ -777,9 +785,240 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         counts = f"{log_count} logs / {summary_count} summaries"
         return f"{scope_text} • {window_text} • {counts}"
 
+    def _clean_oracle_response(self, text: str) -> str:
+        """Pre-process response to remove duplicates, normalize sections, and clean up formatting."""
+        if not text:
+            return ""
+        
+        lines = text.split('\n')
+        cleaned_lines = []
+        current_section = None
+        section_content = []
+        seen_none_in_section = False
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Detect section headers
+            if line.startswith('## '):
+                # Process previous section if exists
+                if current_section is not None:
+                    cleaned_section = self._clean_section(current_section, section_content)
+                    cleaned_lines.extend(cleaned_section)
+                
+                # Start new section
+                current_section = line
+                section_content = []
+                seen_none_in_section = False
+                i += 1
+                continue
+            
+            # Collect content for current section
+            if current_section is not None:
+                if line.lower() == 'none':
+                    seen_none_in_section = True
+                section_content.append(line)
+            else:
+                # Content before first section (direct answer)
+                cleaned_lines.append(lines[i])
+            
+            i += 1
+        
+        # Process last section
+        if current_section is not None:
+            cleaned_section = self._clean_section(current_section, section_content)
+            cleaned_lines.extend(cleaned_section)
+        
+        # Join and clean up multiple empty lines
+        result = '\n'.join(cleaned_lines)
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        return result.strip()
+    
+    def _clean_section(self, header: str, content: list) -> list:
+        """Clean a single section: remove duplicate None, remove None from lists with content."""
+        result = [header]
+        
+        # Normalize header (remove trailing colon if present, handle "## X: None" format)
+        header_text = header[3:].strip()
+        if ':' in header_text:
+            parts = header_text.split(':', 1)
+            header_name = parts[0].strip()
+            header_value = parts[1].strip().lower()
+            if header_value in ('none', ''):
+                # Header already says None, skip content
+                return [f"## {header_name}: None"]
+            else:
+                # Header has value, use normalized header
+                result = [f"## {header_name}"]
+        
+        # Filter content
+        filtered_content = []
+        has_real_content = False
+        none_count = 0
+        
+        for line in content:
+            line_lower = line.lower().strip()
+            if line_lower == 'none':
+                none_count += 1
+            elif line.startswith('- ') and line_lower != '- none':
+                has_real_content = True
+                filtered_content.append(line)
+            elif line and not line.startswith('- '):
+                has_real_content = True
+                filtered_content.append(line)
+        
+        # If we have real content, remove all "None" entries
+        if has_real_content:
+            filtered_content = [l for l in filtered_content if l.lower().strip() != 'none' and l.lower().strip() != '- none']
+            result.extend(filtered_content)
+        elif none_count > 0:
+            # Only None entries, keep just one
+            result.append("None")
+        # else: section is empty, return header with None
+        
+        return result
+    
+    def _get_section_icon(self, section_name: str) -> str:
+        """Return an emoji/icon for section types."""
+        icons = {
+            "summary": "📋",
+            "people": "👥",
+            "risks": "⚠️",
+            "follow-ups": "🔔",
+            "followups": "🔔",
+        }
+        section_lower = section_name.lower()
+        for key, icon in icons.items():
+            if key in section_lower:
+                return icon
+        return "•"
+    
     def _render_oracle_markdown(self, text: str) -> str:
-        escaped = html.escape(text or "")
-        return escaped.replace("\n\n", "<br><br>").replace("\n", "<br>")
+        """Convert markdown to HTML with proper formatting and section-aware styling."""
+        if not text:
+            return ""
+        
+        # Clean the response first
+        cleaned_text = self._clean_oracle_response(text)
+        
+        # Split into lines and collect direct answer
+        lines = cleaned_text.split('\n')
+        direct_answer_lines = []
+        sections = []
+        current_section = None
+        current_section_content = []
+        
+        # Parse into direct answer and sections
+        for line in lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith('## '):
+                # Save previous section
+                if current_section is not None:
+                    sections.append((current_section, current_section_content))
+                # Start new section
+                current_section = line_stripped
+                current_section_content = []
+            elif current_section is None:
+                # Direct answer content
+                if line_stripped:
+                    direct_answer_lines.append(line_stripped)
+            else:
+                # Section content
+                current_section_content.append(line_stripped)
+        
+        # Save last section
+        if current_section is not None:
+            sections.append((current_section, current_section_content))
+        
+        # Sort sections: content-rich first, empty last
+        def section_has_content(section_data):
+            _, content = section_data
+            # Check if section has real content (not just "None")
+            for item in content:
+                if item and item.lower() not in ('none', '- none', ''):
+                    return True
+            return False
+        
+        sections_with_content = [s for s in sections if section_has_content(s)]
+        sections_empty = [s for s in sections if not section_has_content(s)]
+        sorted_sections = sections_with_content + sections_empty
+        
+        # Build HTML
+        result = []
+        
+        # Render direct answer with highlight box
+        if direct_answer_lines:
+            direct_answer_text = ' '.join(direct_answer_lines)
+            direct_answer_text = html.escape(direct_answer_text)
+            direct_answer_text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', direct_answer_text)
+            result.append(
+                f'<div style="background:linear-gradient(135deg, rgba(56,189,248,0.15) 0%, rgba(56,189,248,0.08) 100%); '
+                f'border-left:3px solid #38bdf8; border-radius:8px; padding:12px 16px; margin-bottom:16px; '
+                f'margin-top:4px;">'
+                f'<p style="margin:0; line-height:1.7; font-size:16px; color:#f8fafc; font-weight:600;">{direct_answer_text}</p>'
+                f'</div>'
+            )
+        
+        # Render sections
+        for section_header, section_content in sorted_sections:
+            title = html.escape(section_header[3:].strip())
+            is_empty = not section_has_content((section_header, section_content))
+            
+            # Handle "Summary: None" format
+            if ':' in title and title.split(':', 1)[1].strip().lower() in ('none', ''):
+                title_part = title.split(':', 1)[0]
+                icon = self._get_section_icon(title_part)
+                result.append(
+                    f'<div style="margin-top:20px; padding-top:12px; border-top:1px solid rgba(56,189,248,0.15);">'
+                    f'<h3 style="margin:0 0 8px 0; color:#64748b; font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">'
+                    f'<span>{icon}</span><span>{title_part}</span>'
+                    f'</h3>'
+                    f'<p style="margin:4px 0 0 24px; color:#64748b; font-style:italic; font-size:12px;">None</p>'
+                    f'</div>'
+                )
+            else:
+                icon = self._get_section_icon(title)
+                section_style = "color:#38bdf8;" if not is_empty else "color:#64748b;"
+                result.append(
+                    f'<div style="margin-top:20px; padding-top:12px; border-top:1px solid rgba(56,189,248,0.15);">'
+                    f'<h3 style="margin:0 0 10px 0; {section_style} font-size:14px; font-weight:700; display:flex; align-items:center; gap:6px;">'
+                    f'<span>{icon}</span><span>{title}</span>'
+                    f'</h3>'
+                )
+                
+                # Render section content
+                in_list = False
+                has_items = False
+                
+                for item in section_content:
+                    if item.startswith('- '):
+                        if not in_list:
+                            result.append('<ul style="margin:6px 0 6px 24px; padding-left:20px; list-style-type:disc;">')
+                            in_list = True
+                        content = html.escape(item[2:].strip())
+                        if content.lower() != 'none':
+                            has_items = True
+                            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
+                            result.append(f'<li style="margin:4px 0; line-height:1.5; color:#cbd5f5;">{content}</li>')
+                    elif item and item.lower() != 'none':
+                        if in_list:
+                            result.append('</ul>')
+                            in_list = False
+                        has_items = True
+                        escaped = html.escape(item)
+                        escaped = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', escaped)
+                        result.append(f'<p style="margin:6px 0 6px 24px; line-height:1.5; color:#cbd5f5;">{escaped}</p>')
+                
+                if in_list:
+                    result.append('</ul>')
+                
+                if not has_items and not is_empty:
+                    result.append(f'<p style="margin:4px 0 0 24px; color:#64748b; font-style:italic; font-size:12px;">None</p>')
+                
+                result.append('</div>')
+        
+        return ''.join(result)
 
     def _update_oracle_meta(self, payload: dict) -> None:
         if not hasattr(self, "oracle_meta_label"):
