@@ -3,8 +3,16 @@ import os
 import re
 import sys
 import threading
+from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
+
+import matplotlib
+matplotlib.use('Qt5Agg')
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from qt_material import apply_stylesheet
@@ -26,11 +34,213 @@ class SignalBus(QtCore.QObject):
     oracle_status = QtCore.pyqtSignal(str)
 
 
+class CollapsibleCard(QtWidgets.QWidget):
+    """A collapsible card widget with smooth expand/collapse animation."""
+    
+    def __init__(self, title: str, icon: str = "", parent=None):
+        super().__init__(parent)
+        self._expanded = True
+        self._content_widget = None
+        
+        # Main layout
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Header
+        self.header = QtWidgets.QFrame()
+        self.header.setObjectName("CollapsibleHeader")
+        self.header.setStyleSheet(
+            """
+            QFrame#CollapsibleHeader {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(30, 41, 59, 0.9), stop:1 rgba(15, 23, 42, 0.9));
+                border-radius: 12px 12px 0 0;
+                border: 1px solid rgba(56, 189, 248, 0.2);
+                border-bottom: none;
+            }
+            QFrame#CollapsibleHeader:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(30, 41, 59, 1), stop:1 rgba(15, 23, 42, 1));
+            }
+            """
+        )
+        header_layout = QtWidgets.QHBoxLayout(self.header)
+        header_layout.setContentsMargins(10, 6, 10, 6)
+        header_layout.setSpacing(6)
+        
+        # Title
+        self.title_label = QtWidgets.QLabel(f"{icon} {title}" if icon else title)
+        self.title_label.setStyleSheet(
+            "color: #e2e8f0; font-size: 13px; font-weight: 700;"
+        )
+        header_layout.addWidget(self.title_label)
+        
+        header_layout.addStretch()
+        
+        # Toggle button
+        self.toggle_btn = QtWidgets.QPushButton("▼")
+        self.toggle_btn.setFixedSize(20, 20)
+        self.toggle_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: transparent;
+                border: none;
+                color: #94a3b8;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                color: #38bdf8;
+            }
+            """
+        )
+        self.toggle_btn.clicked.connect(self.toggle)
+        header_layout.addWidget(self.toggle_btn)
+        
+        main_layout.addWidget(self.header)
+        
+        # Content container
+        self.content_container = QtWidgets.QWidget()
+        self.content_container.setObjectName("CollapsibleContent")
+        self.content_container.setStyleSheet(
+            """
+            QWidget#CollapsibleContent {
+                background: rgba(15, 23, 42, 0.6);
+                border: 1px solid rgba(56, 189, 248, 0.2);
+                border-top: none;
+                border-radius: 0 0 12px 12px;
+            }
+            """
+        )
+        self.content_layout = QtWidgets.QVBoxLayout(self.content_container)
+        self.content_layout.setContentsMargins(8, 8, 8, 8)
+        self.content_layout.setSpacing(0)
+        
+        # Animation
+        self.animation = QtCore.QPropertyAnimation(self.content_container, b"maximumHeight")
+        self.animation.setDuration(300)
+        self.animation.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
+        
+        main_layout.addWidget(self.content_container)
+        
+        # Set initial expanded state
+        self.content_container.setMaximumHeight(16777215)  # Large initial value
+        
+    def set_content(self, widget: QtWidgets.QWidget):
+        """Set the content widget."""
+        if self._content_widget:
+            self.content_layout.removeWidget(self._content_widget)
+            self._content_widget.deleteLater()
+        self._content_widget = widget
+        self.content_layout.addWidget(widget)
+        # Update animation after widget is added
+        QtCore.QTimer.singleShot(10, self._update_animation)
+        
+    def toggle(self):
+        """Toggle expand/collapse state."""
+        self._expanded = not self._expanded
+        self._update_animation()
+        
+    def _update_animation(self):
+        """Update animation based on current state."""
+        if self._expanded:
+            self.toggle_btn.setText("▼")
+            # Get the preferred height
+            self.content_container.setMaximumHeight(16777215)  # Allow full size
+            target_height = self.content_container.sizeHint().height()
+        else:
+            self.toggle_btn.setText("▶")
+            target_height = 0
+            
+        current_height = self.content_container.height()
+        self.animation.setStartValue(current_height)
+        self.animation.setEndValue(target_height)
+        self.animation.start()
+        
+    def expand(self):
+        """Expand the card."""
+        if not self._expanded:
+            self.toggle()
+            
+    def collapse(self):
+        """Collapse the card."""
+        if self._expanded:
+            self.toggle()
+            
+    def is_expanded(self) -> bool:
+        """Return whether the card is expanded."""
+        return self._expanded
+
+
+def create_empty_state_widget(
+    icon: str,
+    title: str,
+    description: str,
+    action_text: Optional[str] = None,
+    action_callback: Optional[callable] = None,
+    parent=None
+) -> QtWidgets.QWidget:
+    """Create a reusable empty state widget."""
+    widget = QtWidgets.QWidget(parent)
+    layout = QtWidgets.QVBoxLayout(widget)
+    layout.setAlignment(QtCore.Qt.AlignCenter)
+    layout.setSpacing(8)
+    layout.setContentsMargins(16, 20, 16, 20)
+    
+    # Icon
+    icon_label = QtWidgets.QLabel(icon)
+    icon_label.setAlignment(QtCore.Qt.AlignCenter)
+    icon_label.setStyleSheet("font-size: 36px;")
+    layout.addWidget(icon_label)
+    
+    # Title
+    title_label = QtWidgets.QLabel(title)
+    title_label.setAlignment(QtCore.Qt.AlignCenter)
+    title_label.setStyleSheet(
+        "color: #cbd5f5; font-size: 15px; font-weight: 700; margin-top: 6px;"
+    )
+    title_label.setWordWrap(True)
+    layout.addWidget(title_label)
+    
+    # Description
+    desc_label = QtWidgets.QLabel(description)
+    desc_label.setAlignment(QtCore.Qt.AlignCenter)
+    desc_label.setStyleSheet(
+        "color: #94a3b8; font-size: 12px; line-height: 1.5; margin-top: 4px;"
+    )
+    desc_label.setWordWrap(True)
+    layout.addWidget(desc_label)
+    
+    # Action button (optional)
+    if action_text and action_callback:
+        action_btn = QtWidgets.QPushButton(action_text)
+        action_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #38bdf8, stop:1 #0ea5e9);
+                color: #0f172a;
+                font-weight: 700;
+                font-size: 14px;
+                border-radius: 10px;
+                padding: 8px 16px;
+                border: none;
+                margin-top: 12px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #7dd3fc, stop:1 #38bdf8);
+            }
+            """
+        )
+        action_btn.clicked.connect(action_callback)
+        layout.addWidget(action_btn, alignment=QtCore.Qt.AlignCenter)
+    
+    return widget
+
+
 class DevScopeWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DevScope")
-        self.setMinimumSize(1080, 720)
+        self.setMinimumSize(1200, 800)
         # Set application-wide styles for better accessibility
         self.setStyleSheet(
             """
@@ -79,14 +289,301 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self._build_layout()
         self._restore_projects_from_disk()
         self._refresh_session_combo()
+        
+        # Buffer update debouncing
+        self._buffer_update_timer = QtCore.QTimer()
+        self._buffer_update_timer.setSingleShot(True)
+        self._buffer_update_timer.timeout.connect(self._render_buffer_debounced)
+        self._pending_buffer_data = None
+
+    # Metrics and Visualization -------------------------------------------
+    
+    def _calculate_metrics(self, entries: List[dict]) -> Dict:
+        """Calculate productivity metrics from activity entries."""
+        if not entries:
+            return {
+                "deep_work_pct": 0,
+                "activity_types": {},
+                "top_apps": {},
+                "alignment_avg": 0,
+                "total_entries": 0,
+            }
+        
+        total = len(entries)
+        deep_work_count = sum(1 for e in entries if e.get("is_deep_work", False))
+        deep_work_pct = (deep_work_count / total * 100) if total > 0 else 0
+        
+        activity_types = Counter(e.get("activity_type", "UNKNOWN") for e in entries)
+        top_apps = Counter(e.get("active_app") or e.get("app_name", "Unknown") for e in entries)
+        
+        alignment_scores = [e.get("alignment_score") for e in entries if e.get("alignment_score") is not None]
+        alignment_avg = sum(alignment_scores) / len(alignment_scores) if alignment_scores else 0
+        
+        return {
+            "deep_work_pct": round(deep_work_pct, 1),
+            "activity_types": dict(activity_types),
+            "top_apps": dict(top_apps.most_common(5)),
+            "alignment_avg": round(alignment_avg, 1),
+            "total_entries": total,
+        }
+    
+    def _build_metrics_cards(self) -> QtWidgets.QWidget:
+        """Build productivity metrics cards in a grid layout."""
+        container = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(container)
+        grid.setSpacing(8)
+        grid.setContentsMargins(0, 0, 0, 0)
+        
+        # Get current buffer data
+        session_id = self._current_session_id()
+        if not session_id or not self.monitor:
+            empty_widget = create_empty_state_widget(
+                "📊",
+                "No Metrics Available",
+                "Start a session to begin tracking productivity metrics.",
+                parent=container
+            )
+            grid.addWidget(empty_widget, 0, 0, 1, 2)
+            return container
+        
+        entries = [e.to_ui_dict() for e in self.monitor.snapshot(session_id)]
+        metrics = self._calculate_metrics(entries)
+        
+        if metrics["total_entries"] < 5:
+            empty_widget = create_empty_state_widget(
+                "📊",
+                "Collecting Data...",
+                f"Only {metrics['total_entries']} entries so far. Need at least 5 entries for meaningful metrics.",
+                parent=container
+            )
+            grid.addWidget(empty_widget, 0, 0, 1, 2)
+            return container
+        
+        # Deep Work Percentage Card
+        deep_work_card = self._create_metric_card(
+            "Deep Work",
+            f"{metrics['deep_work_pct']}%",
+            f"{sum(1 for e in entries if e.get('is_deep_work'))} / {metrics['total_entries']} entries",
+            "#10b981"
+        )
+        grid.addWidget(deep_work_card, 0, 0)
+        
+        # Alignment Score Card
+        alignment_card = self._create_metric_card(
+            "Avg Alignment",
+            f"{metrics['alignment_avg']}",
+            "Score out of 100",
+            "#38bdf8"
+        )
+        grid.addWidget(alignment_card, 0, 1)
+        
+        # Activity Type Distribution Chart
+        if metrics['activity_types']:
+            activity_chart = self._create_activity_type_chart(metrics['activity_types'])
+            grid.addWidget(activity_chart, 1, 0, 1, 2)
+        
+        # Top Apps Chart
+        if metrics['top_apps']:
+            apps_chart = self._create_top_apps_chart(metrics['top_apps'])
+            grid.addWidget(apps_chart, 2, 0, 1, 2)
+        
+        return container
+    
+    def _create_metric_card(self, title: str, value: str, subtitle: str, color: str) -> QtWidgets.QFrame:
+        """Create a single metric card."""
+        card = QtWidgets.QFrame()
+        card.setObjectName("MetricCard")
+        card.setStyleSheet(
+            f"""
+            QFrame#MetricCard {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(15, 23, 42, 0.8), stop:1 rgba(11, 17, 32, 0.8));
+                border: 1px solid rgba(56, 189, 248, 0.2);
+                border-radius: 8px;
+                padding: 10px;
+            }}
+            QFrame#MetricCard:hover {{
+                border-color: {color};
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(15, 23, 42, 0.95), stop:1 rgba(11, 17, 32, 0.95));
+            }}
+            """
+        )
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(8)
+        
+        title_label = QtWidgets.QLabel(title)
+        title_label.setStyleSheet("color: #94a3b8; font-size: 13px; font-weight: 600;")
+        layout.addWidget(title_label)
+        
+        value_label = QtWidgets.QLabel(value)
+        value_label.setStyleSheet(f"color: {color}; font-size: 24px; font-weight: 800;")
+        layout.addWidget(value_label)
+        
+        subtitle_label = QtWidgets.QLabel(subtitle)
+        subtitle_label.setStyleSheet("color: #64748b; font-size: 12px;")
+        layout.addWidget(subtitle_label)
+        
+        return card
+    
+    def _create_activity_type_chart(self, activity_types: Dict[str, int]) -> QtWidgets.QWidget:
+        """Create a bar chart for activity type distribution."""
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        label = QtWidgets.QLabel("Activity Type Distribution")
+        label.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 600; margin-bottom: 6px;")
+        layout.addWidget(label)
+        
+        fig = Figure(figsize=(6, 3), facecolor='#0f172a')
+        canvas = FigureCanvasQTAgg(fig)
+        ax = fig.add_subplot(111, facecolor='#0f172a')
+        
+        types = list(activity_types.keys())
+        counts = list(activity_types.values())
+        
+        colors = ['#38bdf8', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+        bars = ax.bar(types, counts, color=colors[:len(types)])
+        
+        ax.set_ylabel('Count', color='#e2e8f0', fontsize=10)
+        ax.tick_params(colors='#94a3b8', labelsize=9)
+        ax.spines['bottom'].set_color('#334155')
+        ax.spines['top'].set_color('#334155')
+        ax.spines['right'].set_color('#334155')
+        ax.spines['left'].set_color('#334155')
+        ax.set_facecolor('#0f172a')
+        
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        fig.tight_layout()
+        
+        layout.addWidget(canvas)
+        return widget
+    
+    def _create_top_apps_chart(self, top_apps: Dict[str, int]) -> QtWidgets.QWidget:
+        """Create a horizontal bar chart for top apps."""
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        label = QtWidgets.QLabel("Top Apps Used")
+        label.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 600; margin-bottom: 6px;")
+        layout.addWidget(label)
+        
+        fig = Figure(figsize=(6, 3), facecolor='#0f172a')
+        canvas = FigureCanvasQTAgg(fig)
+        ax = fig.add_subplot(111, facecolor='#0f172a')
+        
+        apps = list(top_apps.keys())
+        counts = list(top_apps.values())
+        
+        bars = ax.barh(apps, counts, color='#38bdf8')
+        
+        ax.set_xlabel('Usage Count', color='#e2e8f0', fontsize=10)
+        ax.tick_params(colors='#94a3b8', labelsize=9)
+        ax.spines['bottom'].set_color('#334155')
+        ax.spines['top'].set_color('#334155')
+        ax.spines['right'].set_color('#334155')
+        ax.spines['left'].set_color('#334155')
+        ax.set_facecolor('#0f172a')
+        
+        fig.tight_layout()
+        
+        layout.addWidget(canvas)
+        return widget
+    
+    def _build_activity_timeline_chart(self) -> QtWidgets.QWidget:
+        """Build activity timeline visualization."""
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        session_id = self._current_session_id()
+        if not session_id or not self.monitor:
+            empty_widget = create_empty_state_widget(
+                "📈",
+                "No Timeline Available",
+                "Start a session to see activity timeline.",
+                parent=widget
+            )
+            layout.addWidget(empty_widget)
+            return widget
+        
+        entries = [e.to_ui_dict() for e in self.monitor.snapshot(session_id)]
+        if not entries:
+            empty_widget = create_empty_state_widget(
+                "📈",
+                "Activity Timeline Will Appear Here",
+                "Once you start capturing activity, a timeline visualization will show your work patterns over time.",
+                parent=widget
+            )
+            layout.addWidget(empty_widget)
+            return widget
+        
+        # Create timeline chart
+        fig = Figure(figsize=(10, 4), facecolor='#0f172a')
+        canvas = FigureCanvasQTAgg(fig)
+        ax = fig.add_subplot(111, facecolor='#0f172a')
+        
+        # Prepare data
+        timestamps = []
+        activity_colors = []
+        y_positions = []
+        
+        activity_color_map = {
+            'DEBUGGING': '#ef4444',
+            'CODING': '#10b981',
+            'RESEARCH': '#38bdf8',
+            'TESTING': '#f59e0b',
+            'REVIEWING': '#8b5cf6',
+        }
+        
+        for i, entry in enumerate(entries[-50:]):  # Show last 50 entries
+            try:
+                ts_str = entry.get("timestamp", "")
+                if isinstance(ts_str, str):
+                    ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                else:
+                    ts = ts_str
+                timestamps.append(ts)
+                
+                activity_type = entry.get("activity_type", "UNKNOWN")
+                color = activity_color_map.get(activity_type, '#64748b')
+                activity_colors.append(color)
+                y_positions.append(i)
+            except Exception:
+                continue
+        
+        if timestamps:
+            # Create horizontal bars
+            for i, (ts, color, y_pos) in enumerate(zip(timestamps, activity_colors, y_positions)):
+                ax.barh(y_pos, 1, left=i, height=0.8, color=color, alpha=0.7)
+            
+            # Mark deep work entries
+            for i, entry in enumerate(entries[-50:]):
+                if entry.get("is_deep_work"):
+                    ax.scatter(i, y_positions[i] if i < len(y_positions) else 0, 
+                             color='#fbbf24', marker='*', s=50, zorder=5)
+        
+        ax.set_xlabel('Time', color='#e2e8f0', fontsize=10)
+        ax.set_ylabel('Activity Index', color='#e2e8f0', fontsize=10)
+        ax.tick_params(colors='#94a3b8', labelsize=9)
+        ax.spines['bottom'].set_color('#334155')
+        ax.spines['top'].set_color('#334155')
+        ax.spines['right'].set_color('#334155')
+        ax.spines['left'].set_color('#334155')
+        ax.set_facecolor('#0f172a')
+        
+        fig.tight_layout()
+        layout.addWidget(canvas)
+        
+        return widget
 
     # UI ------------------------------------------------------------------
 
     def _build_layout(self) -> None:
         central = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(central)
-        layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(24)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
         # Hero header card with glassmorphism
         hero_frame = QtWidgets.QFrame()
@@ -99,7 +596,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
                     stop:0 rgba(17, 24, 39, 0.95),
                     stop:1 rgba(11, 17, 32, 0.92)
                 );
-                border-radius: 24px;
+                border-radius: 12px;
                 border: 1px solid rgba(56, 189, 248, 0.12);
             }
             QLabel#HeroLogo {
@@ -111,14 +608,14 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             }
             QLabel#HeroTitle {
                 color: #f8fafc;
-                font-size: 32px;
+                font-size: 24px;
                 font-weight: 800;
                 line-height: 1.2;
             }
             QLabel#HeroSubtitle {
                 color: #cbd5f5;
-                font-size: 14px;
-                line-height: 1.6;
+                font-size: 12px;
+                line-height: 1.5;
             }
             QFrame#StatCard {
                 background-color: rgba(15, 23, 42, 0.7);
@@ -128,11 +625,11 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             """
         )
         hero_layout = QtWidgets.QHBoxLayout(hero_frame)
-        hero_layout.setContentsMargins(40, 32, 40, 32)
-        hero_layout.setSpacing(40)
+        hero_layout.setContentsMargins(16, 12, 16, 12)
+        hero_layout.setSpacing(16)
 
         left_block = QtWidgets.QVBoxLayout()
-        left_block.setSpacing(8)
+        left_block.setSpacing(4)
         title = QtWidgets.QLabel("DevScope")
         title.setObjectName("HeroTitle")
         title.setWordWrap(True)
@@ -143,26 +640,26 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         subtitle.setWordWrap(True)
         left_block.addWidget(subtitle)
 
-        left_block.addSpacing(8)
+        left_block.addSpacing(4)
 
         hero_layout.addLayout(left_block, stretch=2)
 
         right_block = QtWidgets.QVBoxLayout()
-        right_block.setSpacing(12)
+        right_block.setSpacing(8)
         right_block.setAlignment(QtCore.Qt.AlignTop)
 
         self.status_chip = QtWidgets.QLabel("● Idle")
         self.status_chip.setAlignment(QtCore.Qt.AlignCenter)
-        self.status_chip.setFixedWidth(180)
+        self.status_chip.setFixedWidth(140)
         self.status_chip.setStyleSheet(
             """
-            border-radius: 24px;
-            padding: 12px 20px;
+            border-radius: 16px;
+            padding: 8px 14px;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(75, 85, 99, 0.9), stop:1 rgba(75, 85, 99, 0.8));
             color: #f8fafc;
             font-weight: 700;
-            font-size: 13px;
-            letter-spacing: 0.5px;
+            font-size: 11px;
+            letter-spacing: 0.3px;
             """
         )
         right_block.addWidget(self.status_chip, alignment=QtCore.Qt.AlignRight)
@@ -172,12 +669,12 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.settings_btn.setStyleSheet(
             """
             QPushButton {
-                border-radius: 16px;
-                padding: 14px 24px;
+                border-radius: 12px;
+                padding: 10px 18px;
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #38bdf8, stop:1 #0ea5e9);
                 color: #0f172a;
                 font-weight: 700;
-                font-size: 14px;
+                font-size: 12px;
                 border: none;
             }
             QPushButton:hover {
@@ -207,12 +704,12 @@ class DevScopeWindow(QtWidgets.QMainWindow):
                 color: #94a3b8;
                 border: 1px solid rgba(56, 189, 248, 0.1);
                 border-bottom: none;
-                border-top-left-radius: 12px;
-                border-top-right-radius: 12px;
-                padding: 12px 24px;
-                margin-right: 4px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 8px 16px;
+                margin-right: 2px;
                 font-weight: 600;
-                font-size: 14px;
+                font-size: 12px;
             }
             QTabBar::tab:selected {
                 background: rgba(15, 23, 42, 0.9);
@@ -227,6 +724,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             """
         )
         self.tab_widget.addTab(self._build_mission_control_tab(), "🎯 Mission Control")
+        self.tab_widget.addTab(self._build_stats_tab(), "📊 Stats & Reports")
         self.tab_widget.addTab(self._build_hive_mind_tab(), "🧠 Hive Mind")
         layout.addWidget(self.tab_widget)
 
@@ -236,13 +734,13 @@ class DevScopeWindow(QtWidgets.QMainWindow):
     def _build_mission_control_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
-        layout.setSpacing(24)
+        layout.setSpacing(20)
         layout.setContentsMargins(0, 0, 0, 0)
 
         session_bar = QtWidgets.QHBoxLayout()
         session_label = QtWidgets.QLabel("📁 Projects / Sessions")
-        session_label.setFont(QtGui.QFont("Inter", 14, QtGui.QFont.Bold))
-        session_label.setStyleSheet("color: #e2e8f0; margin-bottom: 4px;")
+        session_label.setFont(QtGui.QFont("Inter", 12, QtGui.QFont.Bold))
+        session_label.setStyleSheet("color: #e2e8f0; margin-bottom: 2px;")
         self.session_combo = QtWidgets.QComboBox()
         self.session_combo.setStyleSheet(
             """
@@ -250,10 +748,10 @@ class DevScopeWindow(QtWidgets.QMainWindow):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(30, 41, 59, 0.95), stop:1 rgba(15, 23, 42, 0.95));
                 color: #f8fafc;
                 border: 2px solid rgba(59, 130, 246, 0.4);
-                border-radius: 12px;
-                padding: 10px 16px;
-                min-height: 40px;
-                font-size: 14px;
+                border-radius: 10px;
+                padding: 8px 12px;
+                min-height: 32px;
+                font-size: 12px;
                 selection-background-color: #38bdf8;
             }
             QComboBox:hover {
@@ -381,7 +879,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         controls = QtWidgets.QHBoxLayout()
         controls.setSpacing(16)
         self.start_btn = QtWidgets.QPushButton("▶ Start Session")
-        self.start_btn.setMinimumHeight(52)
+        self.start_btn.setMinimumHeight(40)
         self.start_btn.setStyleSheet(
             """
             QPushButton {
@@ -408,7 +906,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
 
         self.stop_btn = QtWidgets.QPushButton("⏹ Stop Session")
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setMinimumHeight(52)
+        self.stop_btn.setMinimumHeight(40)
         self.stop_btn.setStyleSheet(
             """
             QPushButton {
@@ -441,21 +939,32 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.focus_chip.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         self.focus_chip.setStyleSheet(
             """
-            border-radius: 14px;
-            padding: 10px 16px;
+            border-radius: 10px;
+            padding: 6px 12px;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(37, 99, 235, 0.9), stop:1 rgba(59, 130, 246, 0.9));
             color: #f8fafc;
             font-weight: 600;
-            font-size: 13px;
+            font-size: 11px;
             """
         )
         layout.addWidget(self.focus_chip)
 
-        # Buffer table
-        buffer_label = QtWidgets.QLabel("📊 Visual Ring Buffer (latest 10)")
-        buffer_label.setFont(QtGui.QFont("Inter", 15, QtGui.QFont.Bold))
-        buffer_label.setStyleSheet("color: #e2e8f0; margin-bottom: 8px;")
-        layout.addWidget(buffer_label)
+        # Buffer table (Collapsible)
+        self.buffer_card = CollapsibleCard("📋 Visual Ring Buffer", "📋")
+        buffer_container = QtWidgets.QWidget()
+        buffer_layout = QtWidgets.QVBoxLayout(buffer_container)
+        buffer_layout.setContentsMargins(0, 0, 0, 0)
+        buffer_layout.setSpacing(6)
+        
+        buffer_header = QtWidgets.QHBoxLayout()
+        buffer_header.setSpacing(12)
+        
+        self.buffer_update_indicator = QtWidgets.QLabel("")
+        self.buffer_update_indicator.setStyleSheet("color: #38bdf8; font-size: 9px;")
+        buffer_header.addWidget(self.buffer_update_indicator)
+        buffer_header.addStretch()
+        
+        buffer_layout.addLayout(buffer_header)
 
         self.buffer_table = QtWidgets.QTableWidget(0, 6)
         self.buffer_table.setHorizontalHeaderLabels(
@@ -474,7 +983,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
                 font-size: 13px;
             }
             QTableWidget::item {
-                padding: 12px 16px;
+                padding: 6px 10px;
                 border: none;
             }
             QTableWidget::item:hover {
@@ -483,12 +992,12 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             QHeaderView::section {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(29, 78, 216, 0.9), stop:1 rgba(37, 99, 235, 0.9));
                 color: #f8fafc;
-                padding: 12px 16px;
+                padding: 6px 10px;
                 border: none;
                 font-weight: 700;
-                font-size: 13px;
+                font-size: 10px;
                 text-transform: uppercase;
-                letter-spacing: 0.5px;
+                letter-spacing: 0.2px;
             }
             QTableWidget::item:selected {
                 background-color: rgba(56, 189, 248, 0.3);
@@ -514,21 +1023,39 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         header.setStretchLastSection(True)
         header.setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.buffer_table.verticalHeader().setVisible(False)
-        self.buffer_table.verticalHeader().setDefaultSectionSize(64)
+        self.buffer_table.verticalHeader().setDefaultSectionSize(40)
         self.buffer_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.buffer_table.setWordWrap(True)
-        layout.addWidget(self.buffer_table)
+        buffer_layout.addWidget(self.buffer_table)
+        
+        # Empty state for buffer
+        self.buffer_empty_state = create_empty_state_widget(
+            "📋",
+            "No Activity Captured Yet",
+            "Start a session to begin tracking your activity. The buffer will show your recent work here.",
+            parent=buffer_container
+        )
+        buffer_layout.addWidget(self.buffer_empty_state)
+        
+        # Initially show empty state (will be updated when buffer renders)
+        self.buffer_table.hide()
+        self.buffer_empty_state.show()
+        
+        self.buffer_card.set_content(buffer_container)
+        layout.addWidget(self.buffer_card)
 
-        # Log panel
-        log_label = QtWidgets.QLabel("📝 Live Status Log")
-        log_label.setFont(QtGui.QFont("Inter", 15, QtGui.QFont.Bold))
-        log_label.setStyleSheet("color: #e2e8f0; margin-bottom: 8px;")
-        layout.addWidget(log_label)
+        # Log panel (Collapsible)
+        self.log_card = CollapsibleCard("📝 Live Status Log", "📝")
+        log_container = QtWidgets.QWidget()
+        log_layout = QtWidgets.QVBoxLayout(log_container)
+        log_layout.setContentsMargins(0, 0, 0, 0)
 
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(500)
         font = QtGui.QFont("Monaco", 12)
+        font.setStyleHint(QtGui.QFont.Monospace)
+        font = QtGui.QFont("Monaco", 10)
         font.setStyleHint(QtGui.QFont.Monospace)
         self.log_view.setFont(font)
         self.log_view.setStyleSheet(
@@ -536,11 +1063,11 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             QPlainTextEdit {
                 background-color: rgba(11, 17, 32, 0.9);
                 color: #e2e8f0;
-                border-radius: 16px;
-                padding: 16px;
+                border-radius: 8px;
+                padding: 8px;
                 border: 1px solid rgba(56, 189, 248, 0.1);
                 font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-                line-height: 1.6;
+                line-height: 1.4;
             }
             QScrollBar:vertical {
                 background: rgba(11, 17, 32, 0.8);
@@ -558,14 +1085,115 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             }
             """
         )
-        layout.addWidget(self.log_view)
+        log_layout.addWidget(self.log_view)
+        
+        # Empty state for log
+        self.log_empty_state = create_empty_state_widget(
+            "📝",
+            "Status Updates Will Appear Here",
+            "Once you start a session, status updates and activity logs will be displayed here in real-time.",
+            parent=log_container
+        )
+        log_layout.addWidget(self.log_empty_state)
+        
+        # Initially show empty state
+        if self.log_view.toPlainText().strip() == "":
+            self.log_view.hide()
+            self.log_empty_state.show()
+        else:
+            self.log_empty_state.hide()
+            self.log_view.show()
+        
+        self.log_card.set_content(log_container)
+        layout.addWidget(self.log_card)
 
+        return widget
+
+    def _build_stats_tab(self) -> QtWidgets.QWidget:
+        """Build the Stats & Reports tab with metrics and timeline."""
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setSpacing(20)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Refresh controls
+        refresh_bar = QtWidgets.QHBoxLayout()
+        refresh_bar.setSpacing(8)
+        
+        refresh_label = QtWidgets.QLabel("🔄 Refresh Controls")
+        refresh_label.setStyleSheet("color: #cbd5f5; font-size: 11px; font-weight: 600;")
+        refresh_bar.addWidget(refresh_label)
+        
+        self.refresh_metrics_btn = QtWidgets.QPushButton("Refresh Metrics")
+        self.refresh_metrics_btn.setStyleSheet(
+            """
+            QPushButton {
+                background: rgba(30, 41, 59, 0.8);
+                color: #e2e8f0;
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                border-radius: 8px;
+                padding: 5px 10px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: rgba(56, 189, 248, 0.2);
+                border-color: rgba(56, 189, 248, 0.5);
+            }
+            """
+        )
+        self.refresh_metrics_btn.clicked.connect(self._refresh_metrics)
+        refresh_bar.addWidget(self.refresh_metrics_btn)
+        
+        self.auto_refresh_checkbox = QtWidgets.QCheckBox("Auto-refresh (5s)")
+        self.auto_refresh_checkbox.setStyleSheet(
+            """
+            QCheckBox {
+                color: #94a3b8;
+                font-size: 12px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid rgba(56, 189, 248, 0.3);
+                border-radius: 4px;
+                background: rgba(15, 23, 42, 0.8);
+            }
+            QCheckBox::indicator:checked {
+                background: #38bdf8;
+                border-color: #38bdf8;
+            }
+            """
+        )
+        self.auto_refresh_checkbox.toggled.connect(self._toggle_auto_refresh)
+        refresh_bar.addWidget(self.auto_refresh_checkbox)
+        
+        refresh_bar.addStretch()
+        layout.addLayout(refresh_bar)
+        
+        # Auto-refresh timer (if not already created)
+        if not hasattr(self, 'auto_refresh_timer'):
+            self.auto_refresh_timer = QtCore.QTimer()
+            self.auto_refresh_timer.timeout.connect(self._refresh_metrics)
+        
+        # Metrics Cards (Collapsible)
+        self.metrics_card = CollapsibleCard("📊 Productivity Metrics", "📊")
+        metrics_content = self._build_metrics_cards()
+        self.metrics_card.set_content(metrics_content)
+        layout.addWidget(self.metrics_card)
+        
+        # Activity Timeline (Collapsible)
+        self.timeline_card = CollapsibleCard("📈 Activity Timeline", "📈")
+        timeline_content = self._build_activity_timeline_chart()
+        self.timeline_card.set_content(timeline_content)
+        layout.addWidget(self.timeline_card)
+        
         return widget
 
     def _build_hive_mind_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
-        layout.setSpacing(24)
+        layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
         intro = QtWidgets.QLabel("💡 Ask the Hive Mind about your entire organization's work history.")
@@ -875,6 +1503,12 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.bus.log.emit(
             f"[{entry.active_app}] {entry.task} | {entry.app_name} | deep_work={entry.is_deep_work}"
         )
+        
+        # Auto-refresh metrics if enabled
+        if hasattr(self, 'auto_refresh_checkbox') and self.auto_refresh_checkbox.isChecked():
+            # Only refresh every 5th entry to avoid performance issues
+            if len(entries) % 5 == 0:
+                self._refresh_metrics()
         focus_text = entry.active_app or "Unknown"
         window_text = entry.window_title or "Unknown"
         if hasattr(self, "focus_chip"):
@@ -885,11 +1519,49 @@ class DevScopeWindow(QtWidgets.QMainWindow):
                 self.focus_chip.setToolTip("🎯 Active window information")
 
     def _append_log(self, text: str) -> None:
+        if hasattr(self, 'log_empty_state') and hasattr(self, 'log_view'):
+            if self.log_view.isHidden():
+                self.log_empty_state.hide()
+                self.log_view.show()
         self.log_view.appendPlainText(text)
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
     def _render_buffer(self, entries: List[dict]) -> None:
-        latest = entries[-10:]
+        """Render buffer with debouncing for smoother updates."""
+        self._pending_buffer_data = entries
+        self._buffer_update_timer.start(100)  # 100ms debounce
+        
+    def _render_buffer_debounced(self) -> None:
+        """Actually render the buffer after debounce delay."""
+        if self._pending_buffer_data is None:
+            return
+            
+        entries = self._pending_buffer_data
+        self._pending_buffer_data = None
+        
+        # Show updating indicator
+        if hasattr(self, 'buffer_update_indicator'):
+            self.buffer_update_indicator.setText("Updating...")
+            QtCore.QTimer.singleShot(500, lambda: self.buffer_update_indicator.setText(""))
+        
+        latest = entries[-10:] if entries else []
+        
+        # Show/hide empty state
+        if hasattr(self, 'buffer_empty_state'):
+            if not latest:
+                self.buffer_table.hide()
+                self.buffer_empty_state.show()
+            else:
+                self.buffer_empty_state.hide()
+                self.buffer_table.show()
+        
+        if not latest:
+            return
+            
+        # Store scroll position
+        scroll_pos = self.buffer_table.verticalScrollBar().value()
+        is_at_bottom = scroll_pos >= self.buffer_table.verticalScrollBar().maximum() - 10
+        
         self.buffer_table.setRowCount(len(latest))
         for row, entry in enumerate(reversed(latest)):
             self.buffer_table.setRowHeight(row, 56)
@@ -920,6 +1592,12 @@ class DevScopeWindow(QtWidgets.QMainWindow):
                 color = "#facc15"
             privacy_item.setForeground(QtGui.QColor(color))
             self.buffer_table.setItem(row, 5, privacy_item)
+        
+        # Smooth scroll to bottom if we were at bottom before
+        if is_at_bottom:
+            QtCore.QTimer.singleShot(50, lambda: self.buffer_table.verticalScrollBar().setValue(
+                self.buffer_table.verticalScrollBar().maximum()
+            ))
 
     @staticmethod
     def _format_kv(prefix: str, raw_value) -> str:
@@ -969,6 +1647,22 @@ class DevScopeWindow(QtWidgets.QMainWindow):
 
     def _log_async(self, text: str) -> None:
         self.bus.log.emit(text)
+    
+    def _refresh_metrics(self) -> None:
+        """Refresh metrics cards and timeline."""
+        if hasattr(self, 'metrics_card'):
+            metrics_content = self._build_metrics_cards()
+            self.metrics_card.set_content(metrics_content)
+        if hasattr(self, 'timeline_card'):
+            timeline_content = self._build_activity_timeline_chart()
+            self.timeline_card.set_content(timeline_content)
+    
+    def _toggle_auto_refresh(self, enabled: bool) -> None:
+        """Toggle auto-refresh timer."""
+        if enabled:
+            self.auto_refresh_timer.start(5000)  # 5 seconds
+        else:
+            self.auto_refresh_timer.stop()
 
     def _restore_projects_from_disk(self) -> None:
         saved = load_saved_projects()
