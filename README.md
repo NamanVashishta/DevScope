@@ -60,15 +60,16 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 - **Org-Level Tagging:** Every record automatically carries the NYU team org tag plus `user_id` and `project_name`, so queries can scope to a squad or span the entire company.
 - **Project Discovery:** The `list_projects()` method queries distinct project names from MongoDB, enabling the Oracle UI to show projects that any team member has worked on, not just local sessions.
 
-### 3. Privacy Firewall
+### 4. Privacy Firewall
 - **Local Privacy Classifier:** `DEVSCOPE_PRIVACY_APPS` opt-out list halts capture before the frame is saved.  
 - **Deep/Distracted Gate:** The Smart Extractor labels every frame with `deep_work_state` + `privacy_state`. Distracted frames have their screenshots scrubbed locally and never reach Mongo, Git context reports, or batch summaries.  
 - **No Screenshots in the Cloud:** Only the structured JSON travels to Atlas; raw images remain local and expire with the ring buffer.  
 - **Maker-First Controls:** We verify *Deep Work* before we verify *Upload*.
 
-### 4. Collaborative Surfaces
-- **Mission Control UI (`src/ui.py`):** PyQt dashboard for multi-session management, live logs, and git trigger status.  
-- **Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers with intelligent formatting. Features include: highlighted direct answers, section icons (📋 Summary, 👥 People, ⚠️ Risks, 🔔 Follow-Ups), smart section ordering (content-rich sections first), and automatic cleanup of duplicate/empty entries. The project dropdown automatically combines projects from your local sessions with projects discovered in MongoDB, so you can query work from any team member across the organization.  
+### 5. Collaborative Surfaces
+- **Mission Control Tab (`src/ui.py`):** PyQt dashboard for multi-session management, live activity buffer, and status logs. Features collapsible cards, real-time buffer updates with debouncing, and comprehensive empty states.  
+- **Stats & Reports Tab (`src/ui.py`):** Productivity analytics dashboard with data visualizations including activity timeline charts, deep work metrics, activity type distribution, top apps used, and alignment scores. Features refresh controls and auto-refresh functionality. All metrics are calculated from the current session's activity buffer.  
+- **Hive Mind Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers with intelligent formatting. Features include: highlighted direct answers, section icons (📋 Summary, 👥 People, ⚠️ Risks, 🔔 Follow-Ups), smart section ordering (content-rich sections first), and automatic cleanup of duplicate/empty entries. The project dropdown automatically combines projects from your local sessions with projects discovered in MongoDB, so you can query work from any team member across the organization.  
 - **Ghost Team Seeder (`scripts/ghost_team.py`):** Comprehensive seed data generator that creates realistic activity logs and session summaries for 7 team personas (Frontend, Backend, DevOps, Mobile, Data, Full-stack, QA). Generates 500-1000+ entries across 30 days with complete ActivityRecord fields including error codes, function targets, documentation URLs, and focus bounds. Includes session summaries matching batch.py format.
 
 
@@ -88,7 +89,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 |------|------|
 | `src/monitor.py` | Dual-context capture, Gemini prompting, privacy filter, Hive Mind sync. |
 | `src/session.py` | Data model for multi-session buffers, temp folders, git roots. |
-| `src/ui.py` | Mission Control (sessions/logs) + Hive Mind Oracle tab. |
+| `src/ui.py` | Three-tab PyQt dashboard: Mission Control (sessions/logs), Stats & Reports (analytics/visualizations), and Hive Mind Oracle (queries). |
 | `src/triggers.py` | Per-session git watcher emitting `.devscope/context-<hash>.md`. |
 | `src/db.py` | MongoDB Atlas client (publish/query/list projects). |
 | `src/oracle.py` | RAG wrapper that turns Hive Mind history into natural language answers. |
@@ -189,9 +190,10 @@ Grant Screen Recording in **System Settings → Privacy & Security → Screen Re
 ## 🎥 Demo Flow
 
 1. Launch the UI, create or select a session, press **Start Session**.  
-2. Watch the Visual Ring Buffer populate with dual-context entries (task, active app, deep-work flag).  
-3. Trigger a git commit; inspect `.devscope/context-<hash>.md` for the frozen timeline.  
-4. Open the Hive Mind tab, seed ghost data if needed:
+2. Watch the Visual Ring Buffer populate with dual-context entries (task, active app, deep-work flag) in the **Mission Control** tab.  
+3. Switch to the **Stats & Reports** tab to view productivity metrics, activity timeline charts, and real-time analytics.  
+4. Trigger a git commit; inspect `.devscope/context-<hash>.md` for the frozen timeline.  
+5. Open the **Hive Mind** tab, seed ghost data if needed:
    ```bash
    # Generate ~840 activity entries and summaries for 7 team members across 30 days
    python3 scripts/ghost_team.py --entries-per-user 120 --days 30
@@ -199,7 +201,7 @@ Grant Screen Recording in **System Settings → Privacy & Security → Screen Re
    # Customize: more entries, different time range, skip summaries
    python3 scripts/ghost_team.py --entries-per-user 150 --days 60 --no-summaries
    ```
-5. Ask the Oracle a scoped question and review the synthesized answer plus status log.
+6. Ask the Oracle a scoped question and review the synthesized answer plus status log.
 
 ---
 
