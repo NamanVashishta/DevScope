@@ -38,13 +38,22 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 
 ## 🧬 Technology Pillars (Secret Sauce)
 
-### 1. Dual-Context Vision Engine (`src/monitor.py`)
-- **Panoramic Input:** `mss` stitches every monitor into one frame for peripheral awareness (docs, dashboards, second-screen tabs).  
-- **Foveal Focus:** AppKit/Quartz pulls the precise app + window title under the cursor/keyboard.  
-- **Gemini 2.0 Flash Prompting:** System prompt highlights focus metadata so Deep Work detection weights the active app while still learning from background context.  
-- **Ring Buffer:** Per-session deque keeps ~30 minutes of labeled activity; rolling frames delete PNGs to keep storage bounded.
+### 1. Dual-Context Visual Engine (`src/monitor.py`)
+- **Panoramic + Resized Input:** `mss` captures the stitched virtual desktop (`monitors[0]`), then downsamples to 1080p via Pillow so Gemini never chokes on 4K dual-monitor payloads while text stays crisp.  
+- **Foveal Focus Telemetry:** AppKit/Quartz provides the active app and frontmost window title, giving Gemini an authoritative “what the engineer is actually touching” signal.  
+- **Smart Extractor Prompting:** A senior-auditor style system prompt instructs Gemini to trust the active focus, describe the exact action/target (“Editing the JSON schema in `src/monitor.py`”), and ignore background noise (Spotify, Discord) when developer tools are foregrounded.  
+- **Ring Buffer & Auto-Cleanup:** Each session’s deque stores ~30 minutes of entries; when it overflows we evict the oldest record *and* delete its PNG, guaranteeing bounded disk usage even during marathon sessions.
 
-### 2. MongoDB Atlas Hive Mind (`src/db.py`)
+> **Result:** Dual-context capture + resized frames + precision prompting = lower latency, higher-fidelity logs, and zero screenshot buildup.
+
+### 2. Batch Summarization Engine (`src/batch.py`)
+- **Timed/On-Demand Runs:** Daemon wakes every 30 minutes (or on commit) to sweep each session’s `temp_disk` folder.  
+- **Mass Upload + Validation:** Screenshots stream into Gemini’s temp storage via `genai.upload_file()` with hard waits for `state == ACTIVE`, skipping any failures.  
+- **Gemini 1.5 Pro Standup:** Large-context prompt converts the entire visual reel into a markdown Daily Standup Report (features, bugs, research, context score) while filtering out non-technical noise.  
+- **Hive Mind Storage:** Summaries land in the Atlas `session_summaries` collection with `org_id`, `user_id`, `session_id`, timestamp, and coverage window so leaders can query historical standups alongside raw activity logs.  
+- **Aggressive Cleanup:** Remote handles are deleted through `genai.delete_file`, and the corresponding local PNGs are purged to keep disks trim.
+
+### 3. MongoDB Atlas Hive Mind (`src/db.py`)
 - **Deep Work Filter:** Metadata is uploaded only if the frame is aligned with the stated goal. Social media, banking, or idle states never leave the laptop.  
 - **Flexible Schema:** Each document stores timestamp, project, technical context, and alignment score—perfect for Visual RAG without schema migrations.  
 - **Org-Level Tagging:** Every record carries `org_id`, `user_id`, and `project_name`, so queries can scope to a squad or span the entire company.
@@ -58,6 +67,7 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 - **Mission Control UI (`src/ui.py`):** PyQt dashboard for multi-session management, live logs, and git trigger status.  
 - **Oracle Tab (`src/oracle.py`):** Query-specific project or org-wide scope; Gemini summarizes the retrieved logs into natural language answers.  
 - **Ghost Team Seeder (`scripts/ghost_team.py`):** CLI utility that injects believable Alice/Bob activity for demos or local testing.
+
 
 ---
 

@@ -92,6 +92,26 @@ class HiveMindClient:
             logger.warning("Hive Mind query failed: %s", exc)
             return []
 
+    def save_summary(self, document: Dict) -> bool:
+        """
+        Persist a session-level summary document (standup/batch reports).
+        """
+        collection = self._ensure_connection()
+        if collection is None:
+            return False
+        try:
+            collection.insert_one(document)
+            logger.debug(
+                "Session summary stored for org=%s user=%s session=%s",
+                document.get("org_id"),
+                document.get("user_id"),
+                document.get("session_id"),
+            )
+            return True
+        except PyMongoError as exc:  # pragma: no cover
+            logger.warning("Failed to store session summary: %s", exc)
+            return False
+
     def close(self) -> None:
         if self._client:
             self._client.close()
@@ -128,4 +148,8 @@ class HiveMindClient:
             self.close()
         except Exception:
             pass
+
+
+# Backwards-compatible alias
+AtlasClient = HiveMindClient
 
