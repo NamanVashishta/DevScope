@@ -1,3 +1,4 @@
+import html
 import os
 import sys
 import threading
@@ -7,9 +8,10 @@ from typing import List, Optional
 from PyQt5 import QtCore, QtGui, QtWidgets
 from qt_material import apply_stylesheet
 
-from hivemind import HiveMindClient
+from db import HiveMindClient
 from monitor import VisualMonitor, VisualEntry
 from oracle import OracleService
+from settings_store import load_settings, save_settings
 from triggers import GitTrigger, SlackWatcher
 
 
@@ -27,6 +29,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("DevScope – Visual Cortex")
         self.setMinimumSize(960, 640)
 
+        self.identity = load_settings()
         self.hivemind_client = HiveMindClient()
         self.oracle_service = OracleService(self.hivemind_client)
         self.monitor: VisualMonitor | None = VisualMonitor(
@@ -34,6 +37,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             on_entry=self._handle_entry,
             hivemind_client=self.hivemind_client,
         )
+        self._apply_identity_to_systems()
         self._monitor_running = False
         self.git_trigger: GitTrigger | None = None
         self.slack_watcher: SlackWatcher | None = None
@@ -71,6 +75,10 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         title_block.addWidget(subtitle)
         header_layout.addLayout(title_block)
         header_layout.addStretch()
+
+        self.settings_btn = QtWidgets.QPushButton("Settings")
+        self.settings_btn.clicked.connect(self._open_settings_dialog)
+        header_layout.addWidget(self.settings_btn)
 
         self.status_chip = QtWidgets.QLabel("Idle")
         self.status_chip.setAlignment(QtCore.Qt.AlignCenter)
@@ -156,51 +164,30 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         layout.setSpacing(16)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        scope_row = QtWidgets.QHBoxLayout()
-        scope_label = QtWidgets.QLabel("Scope")
-        scope_label.setFont(QtGui.QFont("Inter", 12, QtGui.QFont.Bold))
-        self.oracle_scope_combo = QtWidgets.QComboBox()
-        self.oracle_scope_combo.addItem("Specific Project", "project")
-        self.oracle_scope_combo.addItem("Whole Organization", "org")
-        self.oracle_scope_combo.currentIndexChanged.connect(self._handle_oracle_scope_change)
+        intro = QtWidgets.QLabel("Ask the Hive Mind about your entire organization's work history.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
 
-        self.oracle_project_input = QtWidgets.QLineEdit()
-        self.oracle_project_input.setPlaceholderText("Project Name (e.g., Backend-Migration)")
+        self.oracle_chat_view = QtWidgets.QTextBrowser()
+        self.oracle_chat_view.setOpenExternalLinks(True)
+        layout.addWidget(self.oracle_chat_view, 1)
 
-        scope_row.addWidget(scope_label)
-        scope_row.addWidget(self.oracle_scope_combo, 1)
-        scope_row.addWidget(self.oracle_project_input, 2)
-        layout.addLayout(scope_row)
+        input_row = QtWidgets.QHBoxLayout()
+        self.oracle_question_input = QtWidgets.QLineEdit()
+        self.oracle_question_input.setPlaceholderText("e.g., What was Alice working on yesterday?")
+        self.oracle_question_input.returnPressed.connect(self._handle_oracle_question)
+        input_row.addWidget(self.oracle_question_input, 1)
 
-        question_label = QtWidgets.QLabel("Ask the Hive Mind")
-        question_label.setFont(QtGui.QFont("Inter", 14, QtGui.QFont.Bold))
-        layout.addWidget(question_label)
-
-        self.oracle_question_input = QtWidgets.QPlainTextEdit()
-        self.oracle_question_input.setPlaceholderText("e.g., Who worked on the Auth API last week?")
-        self.oracle_question_input.setMaximumBlockCount(1000)
-        layout.addWidget(self.oracle_question_input)
-
-        ask_row = QtWidgets.QHBoxLayout()
-        self.ask_oracle_btn = QtWidgets.QPushButton("Ask Oracle")
-        self.ask_oracle_btn.setMinimumHeight(40)
+        self.ask_oracle_btn = QtWidgets.QPushButton("Ask Question")
+        self.ask_oracle_btn.setMinimumHeight(36)
         self.ask_oracle_btn.clicked.connect(self._handle_oracle_question)
+        input_row.addWidget(self.ask_oracle_btn)
+
         self.oracle_status_label = QtWidgets.QLabel("Idle")
         self.oracle_status_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        ask_row.addWidget(self.ask_oracle_btn)
-        ask_row.addWidget(self.oracle_status_label, 1)
-        layout.addLayout(ask_row)
+        input_row.addWidget(self.oracle_status_label)
+        layout.addLayout(input_row)
 
-        answer_label = QtWidgets.QLabel("Oracle Response")
-        answer_label.setFont(QtGui.QFont("Inter", 14, QtGui.QFont.Bold))
-        layout.addWidget(answer_label)
-
-        self.oracle_answer_view = QtWidgets.QPlainTextEdit()
-        self.oracle_answer_view.setReadOnly(True)
-        self.oracle_answer_view.setMaximumBlockCount(1000)
-        layout.addWidget(self.oracle_answer_view)
-
-        self._handle_oracle_scope_change(self.oracle_scope_combo.currentIndex())
         return widget
 
     # Actions -------------------------------------------------------------
@@ -310,47 +297,63 @@ class DevScopeWindow(QtWidgets.QMainWindow):
     def _log_async(self, text: str) -> None:
         self.bus.log.emit(text)
 
-    # Oracle interactions --------------------------------------------------
+    def _apply_identity_to_systems(self) -> None:
+        """Propagate identity settings to the monitor and other services."""
+        identity = self.identity or {}
+        if self.monitor:
+            self.monitor.update_identity(
+                user_id=identity.get("username"),
+                org_id=identity.get("organization_id"),
+                project_name=identity.get("project_name"),
+                display_name=identity.get("username"),
+            )
 
-    def _handle_oracle_scope_change(self, index: int) -> None:
-        if not hasattr(self, "oracle_project_input"):
+    def _open_settings_dialog(self) -> None:
+        dialog = SettingsDialog(self.identity, self)
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
             return
-        scope = self.oracle_scope_combo.itemData(index)
-        is_project = scope == "project"
-        self.oracle_project_input.setEnabled(is_project)
-        placeholder = "Project Name (e.g., Backend-Migration)" if is_project else "Entire organization selected"
-        self.oracle_project_input.setPlaceholderText(placeholder)
+        self.identity = dialog.values()
+        save_settings(self.identity)
+        self._apply_identity_to_systems()
+        self._log_async("Identity settings updated.")
+
+    # Oracle interactions --------------------------------------------------
 
     def _handle_oracle_question(self) -> None:
         if not self.oracle_service:
             QtWidgets.QMessageBox.warning(self, "Hive Mind Disabled", "Oracle is not configured.")
             return
 
-        question = self.oracle_question_input.toPlainText().strip()
+        question = self.oracle_question_input.text().strip()
         if not question:
             QtWidgets.QMessageBox.warning(self, "Missing Question", "Enter a question for the Hive Mind.")
             return
 
-        scope = self.oracle_scope_combo.currentData()
-        project_name = self.oracle_project_input.text().strip() if scope == "project" else None
-        if scope == "project" and not project_name:
-            QtWidgets.QMessageBox.warning(self, "Missing Project", "Provide a project name when using project scope.")
+        org_id = self.identity.get("organization_id")
+        if not org_id:
+            QtWidgets.QMessageBox.warning(self, "Set Organization", "Open Settings and add your Organization ID.")
             return
 
         self.ask_oracle_btn.setEnabled(False)
-        self.oracle_answer_view.setPlainText("Querying Hive Mind...")
-        thread = threading.Thread(target=self._run_oracle_query, args=(question, scope, project_name), daemon=True)
+        self.oracle_status_label.setText("Querying Hive Mind…")
+        self._append_chat_line("You", question)
+        self.oracle_question_input.clear()
+        thread = threading.Thread(
+            target=self._run_oracle_query,
+            args=(question, org_id, None),
+            daemon=True,
+        )
         thread.start()
 
-    def _run_oracle_query(self, question: str, scope: str, project_name: Optional[str]) -> None:
+    def _run_oracle_query(self, question: str, org_id: str, project_name: Optional[str]) -> None:
         self.bus.oracle_status.emit("Querying Hive Mind…")
-        answer = self.oracle_service.ask(question, scope, project_name)
+        answer = self.oracle_service.ask(question, org_id=org_id, project_name=project_name)
         self.bus.oracle_answer.emit(answer)
         self.bus.oracle_status.emit("Idle")
 
     def _render_oracle_answer(self, answer: str) -> None:
-        if hasattr(self, "oracle_answer_view"):
-            self.oracle_answer_view.setPlainText(answer)
+        if hasattr(self, "oracle_chat_view"):
+            self._append_chat_line("Oracle", answer)
         if hasattr(self, "ask_oracle_btn"):
             self.ask_oracle_btn.setEnabled(True)
 
@@ -361,6 +364,13 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             self.ask_oracle_btn.setEnabled(False)
         elif status == "Idle" and hasattr(self, "ask_oracle_btn"):
             self.ask_oracle_btn.setEnabled(True)
+
+    def _append_chat_line(self, speaker: str, message: str) -> None:
+        if not hasattr(self, "oracle_chat_view"):
+            return
+        safe_speaker = html.escape(speaker)
+        safe_message = html.escape(message)
+        self.oracle_chat_view.append(f"<b>{safe_speaker}:</b> {safe_message}")
 
     # Session management helpers -----------------------------------------
 
@@ -510,6 +520,34 @@ class NewSessionDialog(QtWidgets.QDialog):
     def values(self) -> tuple[str, str]:
         return self.goal_input.text().strip(), self.repo_input.text().strip()
 
+
+class SettingsDialog(QtWidgets.QDialog):
+    def __init__(self, settings: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("DevScope Settings")
+        self.setModal(True)
+
+        layout = QtWidgets.QFormLayout(self)
+        self.username_input = QtWidgets.QLineEdit(settings.get("username", ""))
+        layout.addRow("Username", self.username_input)
+
+        self.org_input = QtWidgets.QLineEdit(settings.get("organization_id", ""))
+        layout.addRow("Organization ID", self.org_input)
+
+        self.project_input = QtWidgets.QLineEdit(settings.get("project_name", ""))
+        layout.addRow("Current Project", self.project_input)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def values(self) -> dict:
+        return {
+            "username": self.username_input.text().strip(),
+            "organization_id": self.org_input.text().strip(),
+            "project_name": self.project_input.text().strip(),
+        }
 
 def main():
     app = QtWidgets.QApplication(sys.argv)

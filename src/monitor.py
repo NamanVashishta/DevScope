@@ -15,7 +15,9 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 import mss
 from PIL import Image
 from api_models import create_model
-from hivemind import HiveMindClient
+
+from db import HiveMindClient
+from prompts import SMART_EXTRACTOR_PROMPT
 from session import Session
 
 try:
@@ -56,32 +58,7 @@ class VisualEntry:
 class VisualMonitor:
     """Captures screenshots, labels them with Gemini, stores metadata per session."""
 
-    SYSTEM_PROMPT_TEMPLATE = """You are a Senior Technical Project Manager monitoring a developer's workflow.
-
-USER STATED GOAL: "{user_goal}"
-
-The user is actively typing in: "{active_app}" (window: "{window_title}").
-The attached screenshot is a panoramic capture of every monitor, so background apps may appear (Spotify, Discord, etc.).
-Use those peripheral clues for context, but judge 'Deep Work' primarily by the active application and its alignment with the goal.
-
-Analyze the attached screenshot of their desktop.
-Your job is to determine if they are on track and extract technical context.
-
-Output a RAW JSON object with this exact schema:
-{{
-    "app_name": "string (e.g., VS Code, Chrome, Terminal)",
-    "activity_type": "one of [CODING, DEBUGGING, RESEARCHING, COMMUNICATING, IDLE, DISTRACTED]",
-    "technical_context": "string (Extract specific error codes, library names, or function names visible. Max 15 words.)",
-    "alignment_score": "integer 0-100 (How much does this screen align with the goal: '{user_goal}'?)",
-    "is_deep_work": boolean (True if activity aligns with the goal. False if social media/unrelated browsing.)
-}}
-
-GUIDELINES:
-1. **Context Extraction:** If you see a StackOverflow page, extract the error being researched. If you see a Terminal, extract the last command.
-2. **Distraction Logic:** - If the App is Social Media/YouTube AND the content is unrelated to '{user_goal}', is_deep_work is FALSE.
-   - If the App is VS Code/Terminal, is_deep_work is usually TRUE.
-
-RETURN ONLY JSON. NO MARKDOWN."""
+    SYSTEM_PROMPT_TEMPLATE = SMART_EXTRACTOR_PROMPT
 
     def __init__(
         self,
@@ -101,9 +78,12 @@ RETURN ONLY JSON. NO MARKDOWN."""
         self.privacy_filter = privacy_filter or default_privacy_filter()
         self.on_entry = on_entry
         self.hivemind = hivemind_client
-        self.hivemind_user_id = os.environ.get("HIVEMIND_USER_ID")
-        self.hivemind_user_name = os.environ.get("HIVEMIND_USER_NAME", self.hivemind_user_id or "")
-        self.hivemind_org_id = os.environ.get("HIVEMIND_ORG_ID")
+        self.identity: Dict[str, Optional[str]] = {
+            "user_id": os.environ.get("HIVEMIND_USER_ID"),
+            "display_name": os.environ.get("HIVEMIND_USER_NAME"),
+            "org_id": os.environ.get("HIVEMIND_ORG_ID"),
+            "project_name": os.environ.get("HIVEMIND_PROJECT_NAME"),
+        }
 
         self.sessions: Dict[str, Session] = {}
         self.active_session_id: Optional[str] = None
@@ -177,6 +157,25 @@ RETURN ONLY JSON. NO MARKDOWN."""
             if not session:
                 return []
             return list(session.ring_buffer)
+
+    def update_identity(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> None:
+        """Refresh the identity tags used for Hive Mind uploads."""
+        with self._lock:
+            if user_id is not None:
+                self.identity["user_id"] = user_id or None
+            if org_id is not None:
+                self.identity["org_id"] = org_id or None
+            if project_name is not None:
+                self.identity["project_name"] = project_name or None
+            if display_name is not None:
+                self.identity["display_name"] = display_name or None
 
     # Thread control -------------------------------------------------------
 
@@ -299,24 +298,25 @@ RETURN ONLY JSON. NO MARKDOWN."""
         )
 
     def _sync_hivemind(self, session: Session, entry: VisualEntry) -> None:
+        identity = self._identity_snapshot()
         if (
             not entry.is_deep_work
             or not self.hivemind
             or not self.hivemind.enabled
-            or not self.hivemind_org_id
-            or not self.hivemind_user_id
+            or not identity.get("org_id")
+            or not identity.get("user_id")
         ):
             return
 
         payload = {
             "timestamp": entry.timestamp,
             "session_id": session.id,
-            "project_name": session.name or session.goal,
+            "project_name": identity.get("project_name") or session.name or session.goal,
             "session_goal": session.goal,
             "repo_path": session.repo_path,
-            "user_id": self.hivemind_user_id,
-            "user_display": self.hivemind_user_name or self.hivemind_user_id,
-            "org_id": self.hivemind_org_id,
+            "user_id": identity.get("user_id"),
+            "user_display": identity.get("display_name") or identity.get("user_id"),
+            "org_id": identity.get("org_id"),
             "summary": f"{entry.task} | {entry.technical_context}",
             "task": entry.task,
             "technical_context": entry.technical_context,
@@ -330,6 +330,10 @@ RETURN ONLY JSON. NO MARKDOWN."""
 
         if not self.hivemind.publish_activity(payload):
             logger.debug("Hive Mind sync skipped or failed for session %s", session.id)
+
+    def _identity_snapshot(self) -> Dict[str, Optional[str]]:
+        with self._lock:
+            return dict(self.identity)
 
     def _delete_file(self, path: str) -> None:
         try:

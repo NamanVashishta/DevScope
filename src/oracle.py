@@ -1,9 +1,8 @@
 import logging
-import os
 from typing import Optional
 
 from api_models import create_model
-from hivemind import HiveMindClient
+from db import HiveMindClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +19,8 @@ class OracleService:
         self.hivemind = hivemind
         self.model = create_model(model_name)
         self.max_context = max_context
-        self.default_org_id = os.environ.get("HIVEMIND_ORG_ID", "")
 
-    def ask(self, question: str, scope: str = "org", project_name: Optional[str] = None) -> str:
+    def ask(self, question: str, org_id: Optional[str], project_name: Optional[str] = None) -> str:
         question = question.strip()
         if not question:
             return "Please enter a question for the Oracle."
@@ -30,11 +28,10 @@ class OracleService:
         if not self.hivemind or not self.hivemind.enabled:
             return "Hive Mind is not configured. Set HIVEMIND_MONGO_URI to enable Oracle."
 
-        org_id = self.default_org_id
         if not org_id:
-            return "Oracle is missing HIVEMIND_ORG_ID."
+            return "Set your Organization ID in Settings to query the Hive Mind."
 
-        scope_key = scope if scope in {"project", "org"} else "org"
+        scope_key = "project" if project_name else "org"
         logs = self.hivemind.query_activity(
             org_id=org_id,
             scope=scope_key,

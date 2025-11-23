@@ -3,6 +3,7 @@ screenshots/
 yell_voice.*
 temp_disk/
 .devscope/
+.env
 *.pyc
 __pycache__/
 .DS_Store
