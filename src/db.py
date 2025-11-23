@@ -24,12 +24,17 @@ class HiveMindClient:
         uri: Optional[str] = None,
         db_name: Optional[str] = None,
         collection_name: Optional[str] = None,
+        summaries_collection_name: Optional[str] = None,
     ) -> None:
         self.uri = uri or os.environ.get("HIVEMIND_MONGO_URI")
         self.db_name = db_name or os.environ.get("HIVEMIND_MONGO_DB", "devscope")
         self.collection_name = collection_name or os.environ.get("HIVEMIND_COLLECTION", "activity_logs")
+        self.summaries_collection_name = summaries_collection_name or os.environ.get(
+            "HIVEMIND_SUMMARIES_COLLECTION", "session_summaries"
+        )
         self._client: Optional[MongoClient] = None
         self._collection: Optional[Collection] = None
+        self._summaries_collection: Optional[Collection] = None
         self._healthy: Optional[bool] = None
 
     @property
@@ -96,7 +101,7 @@ class HiveMindClient:
         """
         Persist a session-level summary document (standup/batch reports).
         """
-        collection = self._ensure_connection()
+        collection = self._ensure_summaries_collection()
         if collection is None:
             return False
         try:
@@ -111,6 +116,27 @@ class HiveMindClient:
         except PyMongoError as exc:  # pragma: no cover
             logger.warning("Failed to store session summary: %s", exc)
             return False
+
+    def query_summaries(
+        self,
+        org_id: str,
+        limit: int = 5,
+    ) -> List[Dict]:
+        """Fetch recent high-level session summaries for an org."""
+        collection = self._ensure_summaries_collection()
+        if collection is None or not org_id:
+            return []
+
+        try:
+            cursor = (
+                collection.find({"org_id": org_id})
+                .sort("timestamp", DESCENDING or -1)
+                .limit(max(limit, 1))
+            )
+            return list(cursor)
+        except PyMongoError as exc:  # pragma: no cover
+            logger.warning("Hive Mind summary query failed: %s", exc)
+            return []
 
     def close(self) -> None:
         if self._client:
@@ -142,6 +168,23 @@ class HiveMindClient:
             self._healthy = False
 
         return self._collection
+
+    def _ensure_summaries_collection(self) -> Optional[Collection]:
+        if self._summaries_collection is not None:
+            return self._summaries_collection
+
+        collection = self._ensure_connection()
+        if collection is None or not self._client:
+            return None
+
+        try:
+            db = self._client[self.db_name]
+            self._summaries_collection = db[self.summaries_collection_name]
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Unable to access summaries collection: %s", exc)
+            self._summaries_collection = None
+
+        return self._summaries_collection
 
     def __del__(self) -> None:  # pragma: no cover - destructor safety
         try:

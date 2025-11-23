@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class OracleService:
-    """Natural-language QA over the Hive Mind activity logs."""
+    """Natural-language QA over the Hive Mind activity logs + summaries."""
 
     def __init__(
         self,
@@ -38,38 +38,62 @@ class OracleService:
             project_name=project_name,
             limit=self.max_context,
         )
-        if not logs:
+        summaries = self.hivemind.query_summaries(org_id=org_id, limit=5)
+
+        if not logs and not summaries:
             return "No Hive Mind history found for that scope."
 
-        context_lines = []
-        for doc in logs:
-            timestamp = doc.get("timestamp")
-            if hasattr(timestamp, "isoformat"):
-                ts_text = timestamp.isoformat()
-            else:
-                ts_text = str(timestamp)
-            context_lines.append(
-                f"- {ts_text} | {doc.get('user_display', doc.get('user_id', 'unknown'))} | "
-                f"{doc.get('project_name', 'Unknown Project')} | {doc.get('summary', doc.get('task', ''))}"
-            )
-
-        context_blob = "\n".join(context_lines)
+        context_blob = self._format_context_blocks(logs, summaries)
         prompt = (
             f"Question:\n{question}\n\n"
-            f"Context from Hive Mind (latest first):\n{context_blob}\n\n"
-            "Provide a concise answer with specific names/projects. "
-            "If context is insufficient, reply with 'INSUFFICIENT CONTEXT'."
+            f"{context_blob}\n\n"
+            "Provide a concise answer with specific names/projects."
         )
 
         try:
             response = self.model.call_model(
                 user_prompt=prompt,
-                system_prompt="You are DevScope Oracle, summarizing engineering activity logs.",
+                system_prompt=(
+                    "You are the Team Intelligence Engine. Use the Summaries for high-level context "
+                    "and Raw Logs for specific details. Answer the user's question based STRICTLY on "
+                    "this data. Do not hallucinate."
+                ),
             )
             reply = response.strip() if response else ""
             return reply or "Oracle could not generate a response."
         except Exception as exc:  # pragma: no cover - model errors
             logger.exception("Oracle generation failed: %s", exc)
             return f"Oracle error: {exc}"
+
+    @staticmethod
+    def _format_context_blocks(logs, summaries) -> str:
+        summary_lines = []
+        for doc in summaries or []:
+            ts_text = _safe_timestamp(doc.get("timestamp"))
+            owner = doc.get("user_display") or doc.get("user_id", "unknown")
+            summary_text = doc.get("summary_text", "").strip()
+            summary_lines.append(f"[{owner} - {ts_text}] {summary_text}")
+
+        log_lines = []
+        for doc in logs or []:
+            ts_text = _safe_timestamp(doc.get("timestamp"))
+            owner = doc.get("user_display", doc.get("user_id", "unknown"))
+            project = doc.get("project_name", "Unknown Project")
+            detail = doc.get("summary") or doc.get("task", "")
+            log_lines.append(f"[{owner} - {ts_text}] ({project}) {detail}")
+
+        sections = []
+        if summary_lines:
+            sections.append("--- RECENT SESSION SUMMARIES (High Level) ---\n" + "\n".join(summary_lines))
+        if log_lines:
+            sections.append("--- RAW ACTIVITY LOGS (Low Level Details) ---\n" + "\n".join(log_lines))
+
+        return "\n\n".join(sections) if sections else "No context available."
+
+
+def _safe_timestamp(value) -> str:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value or "unknown time")
 
 
