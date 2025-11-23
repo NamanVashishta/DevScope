@@ -18,49 +18,90 @@ logger = logging.getLogger(__name__)
 
 
 class ContextReporter:
-    """Renders the current buffer into a Markdown context report."""
+    """Renders the recent buffer into a Markdown context report + AI PR draft."""
 
-    def __init__(self, monitor: VisualMonitor, repo_path: str, session_id: str):
+    PROMPT = (
+        "You are an Engineering Scribe. Here is the visual history of a coding session ending in a commit. "
+        "Write a structured Pull Request description. List the Files Modified (inferred from context), "
+        "the External Docs referenced, and the specific Errors debugged."
+    )
+
+    def __init__(
+        self,
+        monitor: VisualMonitor,
+        repo_path: str,
+        session_id: str,
+        *,
+        model_name: str = "gemini-2.0-flash",
+        window_minutes: int = 30,
+    ):
         self.monitor = monitor
         self.repo_path = Path(repo_path)
         self.session_id = session_id
         self.output_dir = self.repo_path / ".devscope"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.window_minutes = window_minutes
+        self.model = create_model(model_name)
 
     def write_report(self, commit_hash: str) -> Path:
-        entries = self.monitor.snapshot(self.session_id)
+        entries = self.monitor.get_active_buffer(session_id=self.session_id, window_minutes=self.window_minutes)
         if not entries:
-            logger.info("No buffer entries, skipping report.")
+            logger.info("No recent buffer entries, skipping context report.")
             return Path()
 
-        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-        file_path = self.output_dir / f"context-{commit_hash[:7]}-{timestamp}.md"
+        timeline_lines = self._format_timeline(entries)
+        timeline_text = "\n".join(timeline_lines)
+        ai_summary = self._summarize_with_gemini(timeline_text)
 
-        lines = [
-            f"# DevScope Context Report",
-            f"- Commit: `{commit_hash}`",
-            f"- Generated: {datetime.utcnow().isoformat()}Z",
-            f"- Buffer Entries: {len(entries)}",
-            "",
-            "## Recent Activity",
-        ]
+        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        file_path = self.output_dir / f"commit_context_{timestamp}.md"
 
         session = self.monitor.get_session(self.session_id)
-        session_label = session.name if session else self.session_id
-        lines.insert(1, f"- Session: `{session_label}`")
+        session_label = session.session_name if session else self.session_id
 
-        for entry in entries[-15:]:
-            label = "✅ Deep Work" if entry.is_deep_work else "⚠️ Context Switch"
-            rel_image = os.path.relpath(entry.image_path, self.repo_path)
-            lines.append(
-                f"- {entry.timestamp.isoformat()} | **{entry.app}** | {entry.task} | "
-                f"{entry.technical_context} | {label}"
-            )
-            lines.append(f"  - Screenshot: `{rel_image}`")
+        lines = [
+            "# DevScope Commit Context",
+            f"- Session: `{session_label}`",
+            f"- Commit: `{commit_hash}`",
+            f"- Repo: `{self.repo_path.name}`",
+            f"- Generated: {datetime.utcnow().isoformat()}Z",
+            f"- Lookback Window: last {self.window_minutes} minutes ({len(entries)} frames)",
+            "",
+            "## Visual Timeline",
+        ]
+        lines.extend(f"- {line}" for line in timeline_lines)
+        lines.extend(
+            [
+                "",
+                "## AI Pull Request Draft",
+                ai_summary or "_Gemini summary unavailable._",
+            ]
+        )
 
         file_path.write_text("\n".join(lines), encoding="utf-8")
         logger.info("Context report written to %s", file_path)
         return file_path
+
+    @staticmethod
+    def _format_timeline(entries: list[VisualEntry]) -> list[str]:
+        formatted = []
+        for entry in entries:
+            formatted.append(
+                f"{entry.timestamp.isoformat()}Z | app={entry.app} | task={entry.task} | "
+                f"context={entry.technical_context} | window=\"{entry.window_title}\" | deep_work={entry.is_deep_work}"
+            )
+        return formatted or ["_No visual events captured._"]
+
+    def _summarize_with_gemini(self, timeline: str) -> str:
+        if not timeline.strip():
+            return ""
+        prompt = f"Visual Timeline:\n{timeline}\n\nProvide the PR description now."
+        try:
+            response = self.model.call_model(user_prompt=prompt, system_prompt=self.PROMPT)
+            return response.strip()
+        except Exception as exc:
+            logger.warning("Gemini summary failed: %s", exc)
+            return ""
 
 
 class GitTrigger(FileSystemEventHandler):

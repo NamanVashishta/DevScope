@@ -8,7 +8,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
@@ -94,13 +94,14 @@ class VisualMonitor:
 
     # Session management ---------------------------------------------------
 
-    def create_session(self, name: str, repo_path: str, goal: str) -> Session:
+    def create_session(self, project_name: str, session_name: str, repo_path: str, goal: str) -> Session:
         session_id = uuid.uuid4().hex
         temp_dir = os.path.join(self.temp_root, session_id)
         os.makedirs(temp_dir, exist_ok=True)
         session = Session(
             id=session_id,
-            name=name,
+            project_name=project_name,
+            session_name=session_name,
             goal=goal,
             repo_path=repo_path,
             temp_dir=temp_dir,
@@ -110,7 +111,7 @@ class VisualMonitor:
             self.sessions[session_id] = session
             if not self.active_session_id:
                 self.active_session_id = session_id
-        logger.info("Created session %s (%s)", session_id, name)
+        logger.info("Created session %s (%s)", session_id, session_name)
         return session
 
     def delete_session(self, session_id: str) -> None:
@@ -135,7 +136,8 @@ class VisualMonitor:
             return [
                 {
                     "id": session.id,
-                    "name": session.name,
+                    "project_name": session.project_name,
+                    "session_name": session.session_name,
                     "goal": session.goal,
                     "repo_path": session.repo_path,
                 }
@@ -157,6 +159,25 @@ class VisualMonitor:
             if not session:
                 return []
             return list(session.ring_buffer)
+
+    def get_active_buffer(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        window_minutes: int = 30,
+    ) -> List[VisualEntry]:
+        """
+        Return buffer entries for the target session limited to the recent window.
+
+        Used by Git triggers to produce commit context without dumping the entire deque.
+        """
+        cutoff = datetime.utcnow() - timedelta(minutes=max(window_minutes, 1))
+        with self._lock:
+            sid = session_id or self.active_session_id
+            session = self.sessions.get(sid) if sid else None
+            if not session:
+                return []
+            return [entry for entry in session.ring_buffer if entry.timestamp >= cutoff]
 
     def update_identity(
         self,
@@ -254,6 +275,7 @@ class VisualMonitor:
             monitor = sct.monitors[0]  # full virtual screen
             raw = sct.grab(monitor)
             img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            img.thumbnail((1920, 1080), Image.LANCZOS)
             img.save(file_path)
             logger.debug("Captured frame %s", file_path)
             return file_path
@@ -291,7 +313,7 @@ class VisualMonitor:
             session.ring_buffer.append(entry)
         logger.info(
             "[%s] Buffered frame - task=%s app=%s deep_work=%s",
-            session.name,
+            session.session_name,
             entry.task,
             entry.app,
             entry.is_deep_work,
@@ -311,7 +333,7 @@ class VisualMonitor:
         payload = {
             "timestamp": entry.timestamp,
             "session_id": session.id,
-            "project_name": identity.get("project_name") or session.name or session.goal,
+            "project_name": identity.get("project_name") or session.project_name or session.goal,
             "session_goal": session.goal,
             "repo_path": session.repo_path,
             "user_id": identity.get("user_id"),

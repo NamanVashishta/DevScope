@@ -8,7 +8,8 @@ from typing import Deque
 @dataclass
 class Session:
     id: str
-    name: str
+    project_name: str
+    session_name: str
     goal: str
     repo_path: str
     temp_dir: str

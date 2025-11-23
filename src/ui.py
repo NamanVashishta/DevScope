@@ -103,7 +103,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
 
         session_bar = QtWidgets.QHBoxLayout()
-        session_label = QtWidgets.QLabel("Sessions")
+        session_label = QtWidgets.QLabel("Projects / Sessions")
         session_label.setFont(QtGui.QFont("Inter", 12, QtGui.QFont.Bold))
         self.session_combo = QtWidgets.QComboBox()
         self.session_combo.currentIndexChanged.connect(self._handle_session_combo_change)
@@ -375,19 +375,31 @@ class DevScopeWindow(QtWidgets.QMainWindow):
     # Session management helpers -----------------------------------------
 
     def _open_new_session_dialog(self) -> None:
-        dialog = NewSessionDialog(self)
+        existing_projects = sorted(
+            {
+                meta.get("project_name", "")
+                for meta in self.monitor.get_sessions_metadata()
+                if meta.get("project_name")
+            }
+        )
+        dialog = NewSessionDialog(existing_projects, self)
         if dialog.exec_() != QtWidgets.QDialog.Accepted:
             return
-        goal, repo_path = dialog.values()
-        if not goal or not repo_path:
-            QtWidgets.QMessageBox.warning(self, "Missing Data", "Provide both goal and repository path.")
+        project_name, session_name, goal, repo_path = dialog.values()
+        if not project_name or not session_name or not goal or not repo_path:
+            QtWidgets.QMessageBox.warning(self, "Missing Data", "Provide project, session, goal, and repository path.")
             return
         if not os.path.isdir(os.path.join(repo_path, ".git")):
             QtWidgets.QMessageBox.warning(self, "Invalid Repo", "Selected folder does not contain a .git directory.")
             return
 
-        session = self.monitor.create_session(name=goal, repo_path=repo_path, goal=goal)
-        self._log_async(f"Session '{goal}' created.")
+        session = self.monitor.create_session(
+            project_name=project_name,
+            session_name=session_name,
+            repo_path=repo_path,
+            goal=goal,
+        )
+        self._log_async(f"Session '{session_name}' created under project '{project_name}'.")
         self._refresh_session_combo(select_id=session.id)
         if self._monitor_running:
             self._switch_to_session(session.id, clear_log=True)
@@ -424,7 +436,10 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.session_combo.clear()
 
         for meta in metadata:
-            label = f"{meta['name']} ({Path(meta['repo_path']).name})"
+            project = meta.get("project_name") or "Untitled Project"
+            session = meta.get("session_name") or "Session"
+            repo_label = Path(meta["repo_path"]).name
+            label = f"{project} • {session} ({repo_label})"
             self.session_combo.addItem(label, meta["id"])
 
         if not metadata:
@@ -490,14 +505,22 @@ class DevScopeWindow(QtWidgets.QMainWindow):
 
 
 class NewSessionDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, projects: List[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("New Session")
         self.setModal(True)
         layout = QtWidgets.QFormLayout(self)
 
+        self.project_combo = QtWidgets.QComboBox()
+        self.project_combo.setEditable(True)
+        self.project_combo.addItems(projects)
+        layout.addRow("Project", self.project_combo)
+
+        self.session_name_input = QtWidgets.QLineEdit()
+        layout.addRow("Session Name", self.session_name_input)
+
         self.goal_input = QtWidgets.QLineEdit()
-        layout.addRow("Session Name / Goal", self.goal_input)
+        layout.addRow("Session Goal", self.goal_input)
 
         repo_layout = QtWidgets.QHBoxLayout()
         self.repo_input = QtWidgets.QLineEdit()
@@ -517,8 +540,13 @@ class NewSessionDialog(QtWidgets.QDialog):
         if path:
             self.repo_input.setText(path)
 
-    def values(self) -> tuple[str, str]:
-        return self.goal_input.text().strip(), self.repo_input.text().strip()
+    def values(self) -> tuple[str, str, str, str]:
+        return (
+            self.project_combo.currentText().strip(),
+            self.session_name_input.text().strip(),
+            self.goal_input.text().strip(),
+            self.repo_input.text().strip(),
+        )
 
 
 class SettingsDialog(QtWidgets.QDialog):
