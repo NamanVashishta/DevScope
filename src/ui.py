@@ -789,13 +789,26 @@ class DevScopeWindow(QtWidgets.QMainWindow):
     def _refresh_project_filters(self) -> None:
         if not hasattr(self, "project_combo"):
             return
-        projects = sorted(
-            {
-                meta.get("project_name", "")
-                for meta in (self.monitor.get_sessions_metadata() if self.monitor else [])
-                if meta.get("project_name")
-            }
-        )
+        
+        # Get local projects from monitor sessions
+        local_projects = {
+            meta.get("project_name", "")
+            for meta in (self.monitor.get_sessions_metadata() if self.monitor else [])
+            if meta.get("project_name")
+        }
+        
+        # Get projects from MongoDB Hive Mind (if enabled)
+        mongodb_projects = set()
+        if self.hivemind_client and self.hivemind_client.enabled:
+            try:
+                mongodb_projects = set(self.hivemind_client.list_projects())
+            except Exception:
+                # Silently fall back to local projects only if Hive Mind query fails
+                pass
+        
+        # Combine both sets and sort
+        projects = sorted(local_projects | mongodb_projects)
+        
         scope_key = self.scope_combo.currentData() if hasattr(self, "scope_combo") else "org"
         self.project_combo.blockSignals(True)
         self.project_combo.clear()

@@ -145,6 +145,27 @@ class HiveMindClient:
             logger.warning("Hive Mind summary query failed: %s", exc)
             return []
 
+    def list_projects(self, org_id: Optional[str] = None) -> List[str]:
+        """
+        Return a sorted list of distinct project names from the Hive Mind activity logs.
+        
+        Filters by org_id to respect organization boundaries.
+        """
+        collection = self._ensure_connection()
+        if collection is None:
+            return []
+
+        try:
+            query = {"org_id": org_id or self._default_org}
+            # Use distinct() to get unique project_name values
+            project_names = collection.distinct("project_name", query)
+            # Filter out None, empty strings, and whitespace-only values
+            filtered = [name for name in project_names if name and str(name).strip()]
+            return sorted(filtered)
+        except PyMongoError as exc:  # pragma: no cover
+            logger.warning("Failed to list projects from Hive Mind: %s", exc)
+            return []
+
     def close(self) -> None:
         if self._client:
             self._client.close()
