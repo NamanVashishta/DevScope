@@ -1,4 +1,4 @@
-# 👁️ DevScope: The Visual Cortex for Engineering Teams
+# 👁️ DevScope – Async Memory for Engineering Teams
 
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -8,7 +8,7 @@
 > **"Software collaboration is broken. We interrupt engineers like routers—asking 'What are you working on?' or 'Where are the API keys?' Every ping kills flow."**
 
 **Track:** Statement Three – Collaborative Code Generation Tooling  
-**Tagline:** *The Visual Cortex for Engineering Teams.*
+**Tagline:** *Capture every breadcrumb without interrupting flow.*
 
 **DevScope** is an Organization-Wide Intelligence Platform. It runs silently on every engineer’s Mac, uses Gemini 2.0 Flash to understand what’s happening on-screen, and turns that context into a searchable Hive Mind backed by MongoDB Atlas.
 
@@ -51,13 +51,13 @@ DevScope converts each maker’s flow into a self-updating wiki so knowledge sur
 - **Timed/On-Demand Runs:** Daemon wakes every 30 minutes (or on commit) to sweep each session’s `temp_disk` folder.  
 - **Mass Upload + Validation:** Screenshots stream into Gemini’s temp storage via `genai.upload_file()` with hard waits for `state == ACTIVE`, skipping any failures.  
 - **Gemini 1.5 Pro Standup:** Large-context prompt converts the entire visual reel into a markdown Daily Standup Report (features, bugs, research, context score) while filtering out non-technical noise.  
-- **Hive Mind Storage:** Summaries land in the Atlas `session_summaries` collection with `org_id`, `user_id`, `session_id`, timestamp, and coverage window so leaders can query historical standups alongside raw activity logs.  
+- **Hive Mind Storage:** Summaries land in the Atlas `session_summaries` collection with `user_id`, `session_id`, timestamp, and coverage window so leaders can query historical standups alongside raw activity logs. Every document also carries the default NYU org tag for backwards compatibility.
 - **Aggressive Cleanup:** Remote handles are deleted through `genai.delete_file`, and the corresponding local PNGs are purged to keep disks trim.
 
 ### 3. MongoDB Atlas Hive Mind (`src/db.py`)
 - **Deep Work Filter:** Metadata is uploaded only if the frame is aligned with the stated goal. Social media, banking, or idle states never leave the laptop.  
 - **Flexible Schema:** Each document stores timestamp, project, technical context, and alignment score—perfect for Visual RAG without schema migrations.  
-- **Org-Level Tagging:** Every record carries `org_id`, `user_id`, and `project_name`, so queries can scope to a squad or span the entire company.
+- **Org-Level Tagging:** Every record automatically carries the NYU team org tag plus `user_id` and `project_name`, so queries can scope to a squad or span the entire company.
 
 ### 3. Privacy Firewall
 - **Local Privacy Classifier:** `DEVSCOPE_PRIVACY_APPS` opt-out list halts capture before the frame is saved.  
@@ -127,7 +127,7 @@ Example metadata stored in MongoDB:
   "deep_work_state": "deep_work",
   "privacy_state": "allowed",
   "user_id": "naman",
-  "org_id": "demo-org",
+  "org_id": "NYU-Team",
   "source": "devscope-vision"
 }
 ```

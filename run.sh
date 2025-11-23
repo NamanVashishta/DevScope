@@ -1,8 +1,8 @@
 #!/bin/bash
-# macOS launcher script for DevScope - The Visual Cortex
+# macOS launcher script for DevScope
 # Activates the virtual environment and starts the new PyQt UI
 
-echo "DevScope - The Visual Cortex"
+echo "DevScope"
 
 # Check if virtual environment exists
 if [ ! -d "focusenv" ]; then

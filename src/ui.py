@@ -28,7 +28,7 @@ class SignalBus(QtCore.QObject):
 class DevScopeWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DevScope – Visual Cortex")
+        self.setWindowTitle("DevScope")
         self.setMinimumSize(960, 640)
 
         self.identity = load_settings()
@@ -64,31 +64,94 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        # Header row
-        header_layout = QtWidgets.QHBoxLayout()
+        # Hero header card
+        hero_frame = QtWidgets.QFrame()
+        hero_frame.setObjectName("HeroFrame")
+        hero_frame.setStyleSheet(
+            """
+            QFrame#HeroFrame {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #111827,
+                    stop:1 #0b1120
+                );
+                border-radius: 28px;
+                border: 1px solid rgba(56, 189, 248, 0.08);
+            }
+            QLabel#HeroLogo {
+                color: #38bdf8;
+                font-size: 13px;
+                font-weight: 700;
+                letter-spacing: 2px;
+            }
+            QLabel#HeroTitle {
+                color: #f8fafc;
+                font-size: 30px;
+                font-weight: 800;
+            }
+            QLabel#HeroSubtitle {
+                color: #cbd5f5;
+                font-size: 13px;
+            }
+            QFrame#StatCard {
+                background-color: rgba(15, 23, 42, 0.6);
+                border-radius: 14px;
+                border: 1px solid rgba(148, 163, 184, 0.25);
+            }
+            """
+        )
+        hero_layout = QtWidgets.QHBoxLayout(hero_frame)
+        hero_layout.setContentsMargins(32, 28, 32, 28)
+        hero_layout.setSpacing(32)
+
+        left_block = QtWidgets.QVBoxLayout()
+        left_block.setSpacing(8)
         title = QtWidgets.QLabel("DevScope")
-        title.setFont(QtGui.QFont("Inter", 28, QtGui.QFont.Bold))
-        subtitle = QtWidgets.QLabel("The Visual Cortex for Engineering Teams")
-        subtitle.setFont(QtGui.QFont("Inter", 12))
-        subtitle.setStyleSheet("color: #9fbccf;")
+        title.setObjectName("HeroTitle")
+        title.setWordWrap(True)
+        left_block.addWidget(title)
 
-        title_block = QtWidgets.QVBoxLayout()
-        title_block.addWidget(title)
-        title_block.addWidget(subtitle)
-        header_layout.addLayout(title_block)
-        header_layout.addStretch()
+        subtitle = QtWidgets.QLabel("Capture every engineering breadcrumb and answer status questions without interruptions.")
+        subtitle.setObjectName("HeroSubtitle")
+        subtitle.setWordWrap(True)
+        left_block.addWidget(subtitle)
 
-        self.settings_btn = QtWidgets.QPushButton("Settings")
-        self.settings_btn.clicked.connect(self._open_settings_dialog)
-        header_layout.addWidget(self.settings_btn)
+        left_block.addSpacing(8)
+
+        hero_layout.addLayout(left_block, stretch=2)
+
+        right_block = QtWidgets.QVBoxLayout()
+        right_block.setSpacing(12)
+        right_block.setAlignment(QtCore.Qt.AlignTop)
 
         self.status_chip = QtWidgets.QLabel("Idle")
         self.status_chip.setAlignment(QtCore.Qt.AlignCenter)
-        self.status_chip.setFixedWidth(120)
-        self.status_chip.setStyleSheet("border-radius: 16px; padding: 8px 12px; background-color: #4a5568; color: white;")
-        header_layout.addWidget(self.status_chip)
+        self.status_chip.setFixedWidth(160)
+        self.status_chip.setStyleSheet(
+            "border-radius: 20px; padding: 10px 18px; background-color: #4b5563; color: #f8fafc; font-weight: 700;"
+        )
+        right_block.addWidget(self.status_chip, alignment=QtCore.Qt.AlignRight)
 
-        layout.addLayout(header_layout)
+        self.settings_btn = QtWidgets.QPushButton("Open Settings")
+        self.settings_btn.clicked.connect(self._open_settings_dialog)
+        self.settings_btn.setStyleSheet(
+            """
+            QPushButton {
+                border-radius: 16px;
+                padding: 12px 22px;
+                background-color: #38bdf8;
+                color: #0f172a;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #7dd3fc;
+            }
+            """
+        )
+        right_block.addWidget(self.settings_btn, alignment=QtCore.Qt.AlignRight)
+
+        hero_layout.addLayout(right_block, stretch=1)
+        layout.addWidget(hero_frame)
 
         self.tab_widget = QtWidgets.QTabWidget()
         self.tab_widget.addTab(self._build_mission_control_tab(), "Mission Control")
@@ -472,7 +535,9 @@ class DevScopeWindow(QtWidgets.QMainWindow):
     def _update_status(self, state: str) -> None:
         color = "#10b981" if state == "Running" else "#4a5568"
         self.status_chip.setText(state)
-        self.status_chip.setStyleSheet(f"border-radius: 16px; padding: 8px 12px; background-color: {color}; color: white;")
+        self.status_chip.setStyleSheet(
+            f"border-radius: 20px; padding: 10px 18px; background-color: {color}; color: #f8fafc; font-weight: 700;"
+        )
 
     def _log_async(self, text: str) -> None:
         self.bus.log.emit(text)
@@ -504,8 +569,6 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         if self.monitor:
             self.monitor.update_identity(
                 user_id=identity.get("username"),
-                org_id=identity.get("organization_id"),
-                project_name=identity.get("project_name"),
                 display_name=identity.get("username"),
             )
 
@@ -530,25 +593,20 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Missing Question", "Enter a question for the Hive Mind.")
             return
 
-        org_id = self.identity.get("organization_id")
-        if not org_id:
-            QtWidgets.QMessageBox.warning(self, "Set Organization", "Open Settings and add your Organization ID.")
-            return
-
         self.ask_oracle_btn.setEnabled(False)
         self.oracle_status_label.setText("Querying Hive Mind…")
         self._append_chat_line("You", question)
         self.oracle_question_input.clear()
         thread = threading.Thread(
             target=self._run_oracle_query,
-            args=(question, org_id, None),
+            args=(question, None),
             daemon=True,
         )
         thread.start()
 
-    def _run_oracle_query(self, question: str, org_id: str, project_name: Optional[str]) -> None:
+    def _run_oracle_query(self, question: str, project_name: Optional[str]) -> None:
         self.bus.oracle_status.emit("Querying Hive Mind…")
-        answer = self.oracle_service.ask(question, org_id=org_id, project_name=project_name)
+        answer = self.oracle_service.ask(question, org_id=None, project_name=project_name)
         self.bus.oracle_answer.emit(answer)
         self.bus.oracle_status.emit("Idle")
 
@@ -769,7 +827,7 @@ class NewSessionDialog(QtWidgets.QDialog):
             if selected:
                 self.repo_input.setText(selected[0])
 
-    def values(self) -> tuple[str, str, str, str]:
+    def values(self) -> tuple[str, str, str]:
         return (
             self.project_combo.currentText().strip(),
             self.goal_input.text().strip(),
@@ -787,12 +845,6 @@ class SettingsDialog(QtWidgets.QDialog):
         self.username_input = QtWidgets.QLineEdit(settings.get("username", ""))
         layout.addRow("Username", self.username_input)
 
-        self.org_input = QtWidgets.QLineEdit(settings.get("organization_id", ""))
-        layout.addRow("Organization ID", self.org_input)
-
-        self.project_input = QtWidgets.QLineEdit(settings.get("project_name", ""))
-        layout.addRow("Current Project", self.project_input)
-
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -801,8 +853,6 @@ class SettingsDialog(QtWidgets.QDialog):
     def values(self) -> dict:
         return {
             "username": self.username_input.text().strip(),
-            "organization_id": self.org_input.text().strip(),
-            "project_name": self.project_input.text().strip(),
         }
 
 def main():
