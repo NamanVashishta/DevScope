@@ -1,9 +1,14 @@
 # minimal ignores
-screenshots/
 yell_voice.*
 temp_disk/
 .devscope/
 .env
+# Python virtual environments
+focusenv/
+venv/
+.venv/
+env/
+ENV/
 *.pyc
 __pycache__/
 .DS_Store

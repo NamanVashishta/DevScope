@@ -2,7 +2,6 @@
 """Seed Mongo Atlas with demo Hive Mind activity."""
 
 import argparse
-import os
 import random
 import sys
 from datetime import datetime, timedelta
@@ -14,6 +13,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
+from constants import DEFAULT_ORG_ID  # noqa: E402
 from db import HiveMindClient  # noqa: E402
 
 PERSONAS: List[Dict] = [
@@ -90,7 +90,7 @@ def seed_persona(client: HiveMindClient, persona: Dict, org_id: str, entries: in
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the Hive Mind with ghost team data.")
-    parser.add_argument("--org-id", default=os.environ.get("HIVEMIND_ORG_ID", "demo-org"), help="Organization ID label")
+    parser.add_argument("--org-id", default=DEFAULT_ORG_ID, help="Organization ID label")
     parser.add_argument("--entries", type=int, default=6, help="Entries per persona")
     args = parser.parse_args()
 

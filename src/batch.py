@@ -9,6 +9,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import google.generativeai as genai
 
+from constants import DEFAULT_ORG_ID
 from db import AtlasClient
 from monitor import VisualMonitor
 from session import Session
@@ -185,7 +186,7 @@ Context Score: (0-10, how focused was this session based on the filtered evidenc
             return snapshot_fn()
         return {
             "user_id": os.environ.get("HIVEMIND_USER_ID"),
-            "org_id": os.environ.get("HIVEMIND_ORG_ID"),
+            "org_id": DEFAULT_ORG_ID,
         }
 
     def _persist_summary(
@@ -198,7 +199,7 @@ Context Score: (0-10, how focused was this session based on the filtered evidenc
         if not self.hivemind or not summary_text:
             return
         document = {
-            "org_id": identity.get("org_id"),
+            "org_id": DEFAULT_ORG_ID,
             "user_id": identity.get("user_id"),
             "session_id": session.id,
             "project_name": session.project_name,
@@ -208,11 +209,11 @@ Context Score: (0-10, how focused was this session based on the filtered evidenc
             "summary_text": summary_text,
             "time_range_minutes": minutes,
         }
-        if not document.get("org_id") or not document.get("user_id"):
+        if not document.get("user_id"):
             logger.warning("Missing identity metadata; summary not stored.")
             return
         if not self.hivemind.save_summary(document):
-            logger.warning("Failed to persist batch summary for session %s.", session_id)
+            logger.warning("Failed to persist batch summary for session %s.", session.id)
 
     @staticmethod
     def _calculate_time_window_minutes(paths: Sequence[str]) -> int:

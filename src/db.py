@@ -3,6 +3,8 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from constants import DEFAULT_ORG_ID
+
 try:
     from pymongo import DESCENDING, MongoClient
     from pymongo.collection import Collection
@@ -36,6 +38,7 @@ class HiveMindClient:
         self._collection: Optional[Collection] = None
         self._summaries_collection: Optional[Collection] = None
         self._healthy: Optional[bool] = None
+        self._default_org = DEFAULT_ORG_ID
 
     @property
     def enabled(self) -> bool:
@@ -57,6 +60,7 @@ class HiveMindClient:
 
         clean_payload = {k: v for k, v in payload.items() if k not in {"image_path", "screenshot"}}
         clean_payload.setdefault("created_at", datetime.utcnow())
+        clean_payload.setdefault("org_id", self._default_org)
 
         try:
             collection.insert_one(clean_payload)
@@ -72,19 +76,22 @@ class HiveMindClient:
 
     def query_activity(
         self,
-        org_id: str,
+        org_id: Optional[str] = None,
         scope: str = "org",
         project_name: Optional[str] = None,
         limit: int = 40,
+        since: Optional[datetime] = None,
     ) -> List[Dict]:
         """Fetch recent activity entries scoped to an org or project."""
         collection = self._ensure_connection()
-        if collection is None or not org_id:
+        if collection is None:
             return []
 
-        query: Dict = {"org_id": org_id}
+        query: Dict = {"org_id": org_id or self._default_org}
         if scope == "project" and project_name:
             query["project_name"] = project_name
+        if since:
+            query["timestamp"] = {"$gte": since}
 
         try:
             cursor = (
@@ -119,17 +126,17 @@ class HiveMindClient:
 
     def query_summaries(
         self,
-        org_id: str,
+        org_id: Optional[str] = None,
         limit: int = 5,
     ) -> List[Dict]:
         """Fetch recent high-level session summaries for an org."""
         collection = self._ensure_summaries_collection()
-        if collection is None or not org_id:
+        if collection is None:
             return []
 
         try:
             cursor = (
-                collection.find({"org_id": org_id})
+                collection.find({"org_id": org_id or self._default_org})
                 .sort("timestamp", DESCENDING or -1)
                 .limit(max(limit, 1))
             )

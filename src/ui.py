@@ -21,7 +21,7 @@ class SignalBus(QtCore.QObject):
     log = QtCore.pyqtSignal(str)
     buffer = QtCore.pyqtSignal(list)
     state = QtCore.pyqtSignal(str)
-    oracle_answer = QtCore.pyqtSignal(str)
+    oracle_answer = QtCore.pyqtSignal(object)
     oracle_status = QtCore.pyqtSignal(str)
 
 
@@ -42,6 +42,13 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self._apply_identity_to_systems()
         self._monitor_running = False
         self.git_trigger: GitTrigger | None = None
+        self._oracle_time_options = [
+            ("Last 24h", 24),
+            ("Last 72h", 72),
+            ("Last 7 days", 168),
+            ("All Activity", 0),
+        ]
+        self.oracle_history: List[dict] = []
 
         self.bus = SignalBus()
         self.bus.log.connect(self._append_log)
@@ -373,25 +380,96 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
+        filters_frame = QtWidgets.QFrame()
+        filters_frame.setObjectName("OracleFilters")
+        filters_frame.setStyleSheet(
+            """
+            QFrame#OracleFilters {
+                background-color: #0f172a;
+                border-radius: 14px;
+                border: 1px solid rgba(56, 189, 248, 0.15);
+            }
+            """
+        )
+        filters_layout = QtWidgets.QHBoxLayout(filters_frame)
+        filters_layout.setContentsMargins(18, 14, 18, 14)
+        filters_layout.setSpacing(18)
+
+        def _build_filter_column(label_text: str, widget_obj: QtWidgets.QWidget) -> QtWidgets.QVBoxLayout:
+            column = QtWidgets.QVBoxLayout()
+            label = QtWidgets.QLabel(label_text)
+            label.setStyleSheet("color: #93c5fd; font-weight: 600;")
+            column.addWidget(label)
+            column.addWidget(widget_obj)
+            return column
+
+        self.scope_combo = QtWidgets.QComboBox()
+        self.scope_combo.addItem("Organization", "org")
+        self.scope_combo.addItem("Project", "project")
+        self.scope_combo.currentIndexChanged.connect(self._handle_scope_change)
+        self.scope_combo.setStyleSheet("background-color: #1e293b; color: #f8fafc; border-radius: 8px; padding: 6px;")
+        filters_layout.addLayout(_build_filter_column("Scope", self.scope_combo))
+
+        self.project_combo = QtWidgets.QComboBox()
+        self.project_combo.setEnabled(False)
+        self.project_combo.setStyleSheet("background-color: #111827; color: #94a3b8; border-radius: 8px; padding: 6px;")
+        filters_layout.addLayout(_build_filter_column("Project", self.project_combo))
+
+        self.time_combo = QtWidgets.QComboBox()
+        self.time_combo.setStyleSheet("background-color: #1e293b; color: #f8fafc; border-radius: 8px; padding: 6px;")
+        for label, hours in self._oracle_time_options:
+            self.time_combo.addItem(label, hours)
+        filters_layout.addLayout(_build_filter_column("Time Window", self.time_combo))
+
+        self.oracle_status_chip = QtWidgets.QLabel("Idle")
+        self.oracle_status_chip.setAlignment(QtCore.Qt.AlignCenter)
+        self.oracle_status_chip.setFixedWidth(140)
+        self.oracle_status_chip.setStyleSheet(
+            "border-radius: 20px; padding: 10px 12px; background-color: #334155; color: #e2e8f0; font-weight: 600;"
+        )
+        filters_layout.addWidget(self.oracle_status_chip, alignment=QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+
+        layout.addWidget(filters_frame)
+
+        self.oracle_meta_label = QtWidgets.QLabel("Awaiting first question • Scope: Organization • Window: All Activity")
+        self.oracle_meta_label.setStyleSheet("color: #cbd5f5;")
+        self.oracle_meta_label.setWordWrap(True)
+        layout.addWidget(self.oracle_meta_label)
+
         self.oracle_chat_view = QtWidgets.QTextBrowser()
         self.oracle_chat_view.setOpenExternalLinks(True)
+        self.oracle_chat_view.setStyleSheet(
+            """
+            QTextBrowser {
+                background-color: #0b1120;
+                border-radius: 12px;
+                padding: 14px;
+                color: #e2e8f0;
+            }
+            """
+        )
         layout.addWidget(self.oracle_chat_view, 1)
 
         input_row = QtWidgets.QHBoxLayout()
         self.oracle_question_input = QtWidgets.QLineEdit()
-        self.oracle_question_input.setPlaceholderText("e.g., What was Alice working on yesterday?")
+        self.oracle_question_input.setPlaceholderText("e.g., Summarize what the Payments squad shipped last week.")
         self.oracle_question_input.returnPressed.connect(self._handle_oracle_question)
+        self.oracle_question_input.setStyleSheet(
+            "background-color: #0f172a; border: 1px solid #38bdf8; border-radius: 10px; padding: 10px; color: #f8fafc;"
+        )
         input_row.addWidget(self.oracle_question_input, 1)
 
-        self.ask_oracle_btn = QtWidgets.QPushButton("Ask Question")
-        self.ask_oracle_btn.setMinimumHeight(36)
+        self.ask_oracle_btn = QtWidgets.QPushButton("Ask Oracle")
+        self.ask_oracle_btn.setMinimumHeight(40)
+        self.ask_oracle_btn.setStyleSheet(
+            "background-color: #38bdf8; color: #0f172a; font-weight: 700; border-radius: 12px; padding: 0 18px;"
+        )
         self.ask_oracle_btn.clicked.connect(self._handle_oracle_question)
         input_row.addWidget(self.ask_oracle_btn)
-
-        self.oracle_status_label = QtWidgets.QLabel("Idle")
-        self.oracle_status_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        input_row.addWidget(self.oracle_status_label)
         layout.addLayout(input_row)
+
+        self._handle_scope_change()
+        self._refresh_project_filters()
 
         return widget
 
@@ -558,6 +636,7 @@ class DevScopeWindow(QtWidgets.QMainWindow):
                 print(f"Failed to restore project '{project}': {exc}")
         if restored:
             self._log_async(f"Restored {restored} project(s) from disk.")
+        self._refresh_project_filters()
 
     def _persist_projects_state(self) -> None:
         metadata = self.monitor.get_sessions_metadata()
@@ -593,43 +672,165 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Missing Question", "Enter a question for the Hive Mind.")
             return
 
+        scope_key = self.scope_combo.currentData() if hasattr(self, "scope_combo") else "org"
+        project_name: Optional[str] = None
+        if scope_key == "project":
+            project_name = (self.project_combo.currentText() or "").strip()
+            if not project_name or not self.project_combo.isEnabled():
+                QtWidgets.QMessageBox.warning(self, "Select Project", "Choose a project before running a scoped query.")
+                return
+
+        hours = None
+        if hasattr(self, "time_combo"):
+            selected = self.time_combo.currentData()
+            if selected and int(selected) > 0:
+                hours = int(selected)
+
         self.ask_oracle_btn.setEnabled(False)
-        self.oracle_status_label.setText("Querying Hive Mind…")
-        self._append_chat_line("You", question)
         self.oracle_question_input.clear()
         thread = threading.Thread(
             target=self._run_oracle_query,
-            args=(question, None),
+            args=(question, scope_key, project_name, hours),
             daemon=True,
         )
         thread.start()
 
-    def _run_oracle_query(self, question: str, project_name: Optional[str]) -> None:
+    def _run_oracle_query(
+        self,
+        question: str,
+        scope_key: str,
+        project_name: Optional[str],
+        hours: Optional[int],
+    ) -> None:
         self.bus.oracle_status.emit("Querying Hive Mind…")
-        answer = self.oracle_service.ask(question, org_id=None, project_name=project_name)
-        self.bus.oracle_answer.emit(answer)
+        answer_payload = self.oracle_service.ask(
+            question,
+            org_id=None,
+            scope=scope_key,
+            project_name=project_name,
+            time_window_hours=hours,
+        )
+        self.bus.oracle_answer.emit(answer_payload)
         self.bus.oracle_status.emit("Idle")
 
-    def _render_oracle_answer(self, answer: str) -> None:
-        if hasattr(self, "oracle_chat_view"):
-            self._append_chat_line("Oracle", answer)
+    def _render_oracle_answer(self, payload) -> None:
+        if payload is None:
+            return
         if hasattr(self, "ask_oracle_btn"):
             self.ask_oracle_btn.setEnabled(True)
+        self.oracle_history.append(payload)
+        self._append_oracle_card(payload)
+        self._update_oracle_meta(payload)
 
     def _update_oracle_status(self, status: str) -> None:
-        if hasattr(self, "oracle_status_label"):
-            self.oracle_status_label.setText(status)
+        if hasattr(self, "oracle_status_chip"):
+            color = "#38bdf8" if status.lower().startswith("querying") else "#334155"
+            self.oracle_status_chip.setText(status)
+            self.oracle_status_chip.setStyleSheet(
+                f"border-radius: 20px; padding: 10px 12px; background-color: {color}; color: #e2e8f0; font-weight: 600;"
+            )
         if status.lower().startswith("querying") and hasattr(self, "ask_oracle_btn"):
             self.ask_oracle_btn.setEnabled(False)
         elif status == "Idle" and hasattr(self, "ask_oracle_btn"):
             self.ask_oracle_btn.setEnabled(True)
 
-    def _append_chat_line(self, speaker: str, message: str) -> None:
+    def _append_oracle_card(self, payload: dict) -> None:
         if not hasattr(self, "oracle_chat_view"):
             return
-        safe_speaker = html.escape(speaker)
-        safe_message = html.escape(message)
-        self.oracle_chat_view.append(f"<b>{safe_speaker}:</b> {safe_message}")
+        question = payload.get("question") or ""
+        answer = payload.get("answer") or ""
+        scope_badge = self._format_scope_badge(payload)
+        answer_html = self._render_oracle_markdown(answer)
+        preview_html = ""
+        preview = payload.get("context_preview") or []
+        if preview:
+            preview_lines = "".join(f"<li>{html.escape(item)}</li>" for item in preview)
+            preview_html = (
+                "<div style='margin-top:10px; font-size:12px; color:#94a3b8;'>Context Sample:"
+                f"<ul>{preview_lines}</ul></div>"
+            )
+
+        card_html = (
+            "<div style='border:1px solid rgba(56, 189, 248, 0.2); border-radius:12px; padding:12px; margin-bottom:12px;'>"
+            f"<div style='font-size:12px; color:#94a3b8;'>{scope_badge}</div>"
+            f"<div style='margin-top:6px;'><b>Q:</b> {html.escape(question)}</div>"
+            f"<div style='margin-top:10px; line-height:1.4;'>{answer_html}</div>"
+            f"{preview_html}"
+            "</div>"
+        )
+        self.oracle_chat_view.append(card_html)
+        self.oracle_chat_view.verticalScrollBar().setValue(self.oracle_chat_view.verticalScrollBar().maximum())
+
+    def _format_scope_badge(self, payload: dict) -> str:
+        scope = payload.get("scope", "org")
+        project = payload.get("project_name")
+        window = payload.get("time_window_hours")
+        log_count = payload.get("log_count", 0)
+        summary_count = payload.get("summary_count", 0)
+
+        if scope == "project" and project:
+            scope_text = f"Project • {project}"
+        else:
+            scope_text = "Organization • All Projects"
+
+        window_text = f"{window}h window" if window else "All history"
+        counts = f"{log_count} logs / {summary_count} summaries"
+        return f"{scope_text} • {window_text} • {counts}"
+
+    def _render_oracle_markdown(self, text: str) -> str:
+        escaped = html.escape(text or "")
+        return escaped.replace("\n\n", "<br><br>").replace("\n", "<br>")
+
+    def _update_oracle_meta(self, payload: dict) -> None:
+        if not hasattr(self, "oracle_meta_label"):
+            return
+        self.oracle_meta_label.setText(self._format_scope_badge(payload))
+
+    def _refresh_project_filters(self) -> None:
+        if not hasattr(self, "project_combo"):
+            return
+        projects = sorted(
+            {
+                meta.get("project_name", "")
+                for meta in (self.monitor.get_sessions_metadata() if self.monitor else [])
+                if meta.get("project_name")
+            }
+        )
+        scope_key = self.scope_combo.currentData() if hasattr(self, "scope_combo") else "org"
+        self.project_combo.blockSignals(True)
+        self.project_combo.clear()
+        if not projects:
+            self.project_combo.addItem("No tracked projects", "")
+            self.project_combo.setEnabled(False)
+            self.project_combo.setStyleSheet("background-color: #111827; color: #94a3b8; border-radius: 8px; padding: 6px;")
+        else:
+            for project in projects:
+                self.project_combo.addItem(project, project)
+            enabled = scope_key == "project"
+            self.project_combo.setEnabled(enabled)
+            color = "#f8fafc" if enabled else "#94a3b8"
+            self.project_combo.setStyleSheet(
+                f"background-color: #1e293b; color: {color}; border-radius: 8px; padding: 6px;"
+            )
+        self.project_combo.blockSignals(False)
+
+    def _handle_scope_change(self) -> None:
+        if not hasattr(self, "scope_combo") or not hasattr(self, "project_combo"):
+            return
+        scope_key = self.scope_combo.currentData()
+        enabled = scope_key == "project" and self.project_combo.count() > 0
+        self.project_combo.setEnabled(enabled)
+        color = "#f8fafc" if enabled else "#94a3b8"
+        self.project_combo.setStyleSheet(
+            f"background-color: #1e293b; color: {color}; border-radius: 8px; padding: 6px;"
+        )
+        if hasattr(self, "oracle_question_input"):
+            placeholder = (
+                "e.g., What did Alice work on yesterday?"
+                if scope_key == "project"
+                else "e.g., Summarize work on the Auth stack this week."
+            )
+            self.oracle_question_input.setPlaceholderText(placeholder)
 
     # Session management helpers -----------------------------------------
 
@@ -732,6 +933,8 @@ class DevScopeWindow(QtWidgets.QMainWindow):
             self.delete_session_btn.setEnabled(False)
             self.complete_session_btn.setEnabled(False)
             self.start_btn.setEnabled(False)
+            self._refresh_project_filters()
+            self._handle_scope_change()
             return
 
         target_id = select_id or metadata[0]["id"]
@@ -742,6 +945,8 @@ class DevScopeWindow(QtWidgets.QMainWindow):
         self.complete_session_btn.setEnabled(True)
         if not self._session_running:
             self.start_btn.setEnabled(True)
+        self._refresh_project_filters()
+        self._handle_scope_change()
         self._switch_to_session(self.session_combo.itemData(index), clear_log=True)
 
     def _handle_session_combo_change(self, index: int) -> None:

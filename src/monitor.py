@@ -16,6 +16,7 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 import mss
 from PIL import Image
 from activity_schema import ActivityRecord
+from constants import DEFAULT_ORG_ID
 from api_models import create_model
 
 from db import HiveMindClient
@@ -135,8 +136,6 @@ class VisualMonitor:
         self.identity: Dict[str, Optional[str]] = {
             "user_id": os.environ.get("HIVEMIND_USER_ID"),
             "display_name": os.environ.get("HIVEMIND_USER_NAME"),
-            "org_id": os.environ.get("HIVEMIND_ORG_ID"),
-            "project_name": os.environ.get("HIVEMIND_PROJECT_NAME"),
         }
 
         self.sessions: Dict[str, Session] = {}
@@ -242,18 +241,12 @@ class VisualMonitor:
         self,
         *,
         user_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-        project_name: Optional[str] = None,
         display_name: Optional[str] = None,
     ) -> None:
         """Refresh the identity tags used for Hive Mind uploads."""
         with self._lock:
             if user_id is not None:
                 self.identity["user_id"] = user_id or None
-            if org_id is not None:
-                self.identity["org_id"] = org_id or None
-            if project_name is not None:
-                self.identity["project_name"] = project_name or None
             if display_name is not None:
                 self.identity["display_name"] = display_name or None
 
@@ -387,7 +380,7 @@ class VisualMonitor:
             screenshot_path=image_path,
             user_id=identity.get("user_id"),
             user_display=identity.get("display_name") or identity.get("user_id"),
-            org_id=identity.get("org_id"),
+            org_id=DEFAULT_ORG_ID,
         )
         return record
 
@@ -476,15 +469,14 @@ class VisualMonitor:
             return
 
         identity = self._identity_snapshot()
-        entry.org_id = entry.org_id or identity.get("org_id")
         entry.user_id = entry.user_id or identity.get("user_id")
         entry.user_display = entry.user_display or identity.get("display_name") or entry.user_id
-        entry.project_name = entry.project_name or identity.get("project_name") or session.project_name
+        entry.org_id = DEFAULT_ORG_ID
+        entry.project_name = session.project_name
 
         if (
             not self.hivemind
             or not self.hivemind.enabled
-            or not entry.org_id
             or not entry.user_id
         ):
             return
@@ -499,7 +491,9 @@ class VisualMonitor:
 
     def _identity_snapshot(self) -> Dict[str, Optional[str]]:
         with self._lock:
-            return dict(self.identity)
+            snapshot = dict(self.identity)
+        snapshot.setdefault("org_id", DEFAULT_ORG_ID)
+        return snapshot
 
     def _delete_file(self, path: str) -> None:
         try:

@@ -7,8 +7,6 @@ SETTINGS_PATH = SETTINGS_DIR / "settings.json"
 
 DEFAULT_SETTINGS: Dict[str, str] = {
     "username": "",
-    "organization_id": "",
-    "project_name": "",
 }
 
 
@@ -30,8 +28,6 @@ def save_settings(settings: Dict[str, Any]) -> None:
     SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     filtered = {
         "username": settings.get("username", "").strip(),
-        "organization_id": settings.get("organization_id", "").strip(),
-        "project_name": settings.get("project_name", "").strip(),
     }
     SETTINGS_PATH.write_text(json.dumps(filtered, indent=2), encoding="utf-8")
 

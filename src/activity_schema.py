@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
+from constants import DEFAULT_ORG_ID
+
 FocusBounds = Tuple[int, int, int, int]
 
 
@@ -40,7 +42,7 @@ class ActivityRecord:
     project_slug: Optional[str] = None
     user_id: Optional[str] = None
     user_display: Optional[str] = None
-    org_id: Optional[str] = None
+    org_id: str = DEFAULT_ORG_ID
     source: str = "devscope-vision"
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -72,7 +74,7 @@ class ActivityRecord:
             "focus_bounds": _bounds_dict(self.focus_bounds),
             "user_id": self.user_id,
             "user_display": self.user_display or self.user_id,
-            "org_id": self.org_id,
+            "org_id": self.org_id or DEFAULT_ORG_ID,
             "source": self.source,
         }
         # Drop keys whose value is None to keep Mongo docs lean.
